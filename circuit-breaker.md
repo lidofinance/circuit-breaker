@@ -17,7 +17,9 @@ The bomb went off. The DAO did get tired of the redeployment process. And after 
 
 ## GateSeals V2
 
-[GateSeals V2](https://www.notion.so/ADR-X-GateSeal-v2-216bf633d0c9809994ebd484c6334e42?pvs=21) were designed around committee-driven prolongation, removing the need for repeated DAO votes when nothing has gone wrong. The committee periodically extends the GateSeal's lifetime within designated windows, proving they're alive and responsive without burdening the DAO. It is a reasonable step forward. However, the implementation carries risks:
+[GateSeals V2](https://www.notion.so/ADR-X-GateSeal-v2-216bf633d0c9809994ebd484c6334e42?pvs=21) were designed around committee-driven prolongation, removing the need for repeated DAO votes when nothing has gone wrong. The committee periodically extends the GateSeal's lifetime within designated windows, proving they're alive and responsive without burdening the DAO. GateSeals V2 were never released or deployed. It was a concept that was considered but ultimately abandoned in favor of a fundamentally different approach.
+
+The design carried risks:
 
 - **Misconfiguration-prone.** V2 introduces four new deployment parameters with interlocking constraints that must all be configured correctly. The prolongation windows are fixed and inflexible. If operational needs change, the contract must be redeployed.
 - **Redundant liveness proofs.** V2 requires prolongation on every GateSeal individually. A committee managing three GateSeals must send three separate prolongation transactions within their respective windows, even though a single transaction already proves the committee is operational. One proof of liveness is enough; V2 demands one per GateSeal.
@@ -37,43 +39,42 @@ In this analogy, a GateSeal works much like a fuse and CircuitBreaker is, well, 
 
 ### How It Works
 
-A single CircuitBreaker is deployed with minimal critical configuration: a global minimum and maximum pause duration, and the DAO Agent address, and is never redeployed (unless a vulnerability found or when moving to a new system). The DAO configures committees and pausable contracts.
+A single CircuitBreaker is deployed with minimal configuration: a pause duration and the DAO Agent address, and is never redeployed. The DAO configures pausers and pausable contracts.
 
-**Pausables and committees.** The DAO registers pausable contracts by pairing each one with a committee. That's the entire configuration per contract: one mapping from a pausable contract to the committee responsible for it. The DAO grants pause permission on each protected contract to the CircuitBreaker's address once. Since the address never changes, this permission does not need to be revoked and regranted.
+**Pausables and pausers.** The DAO registers pausable contracts by pairing each one with a pauser (committee). That's the entire configuration per contract: one mapping from a pausable contract to the pauser responsible for it. The DAO grants pause permission on each protected contract to the CircuitBreaker's address once. Since the address never changes, this permission does not need to be revoked and regranted.
 
-**Pause duration bounds.** The global minimum and maximum pause duration apply to all committees equally. These bounds can be updated at any time to reflect changes in governance timing (e.g. after Dual Governance introduction).
+**Pausable-pauser relationship.** Each pausable contract is assigned exactly one pauser, but a single pauser can be responsible for multiple pausable contracts. This one-to-one relationship from the pausable's side is a deliberate design choice. Allowing multiple pausers per pausable would introduce ambiguity about who is responsible for which contract, complicate accountability when a pause occurs, and expand the attack surface by multiplying the number of parties authorized to pause a given contract. A single pauser per pausable keeps the authorization model simple and auditable. If the DAO needs to transfer responsibility, it reassigns the pausable to a different pauser in a single operation.
 
-**Tripping.** In an emergency, the committee triggers the CircuitBreaker with the list of contracts to pause and the desired duration (within the global bounds). For each contract, the CircuitBreaker verifies the caller is the assigned committee and that the pair hasn't already been tripped, then pauses the contract. If any pause call fails, the entire transaction reverts. Tripping is atomic. Each successful trip burns the committee's right on that specific contract. The committee can still trip other contracts assigned to them.
+**Pause duration.** A single global pause duration applies to all pausers equally. This value can be updated by the DAO at any time to reflect changes in governance timing (e.g. after Dual Governance introduction).
 
-**Resetting.** After a trip, the DAO resets specific contracts, re-enabling the committee's right to trip them again. The circuit breaker analogy: the breaker tripped, the fault was addressed, the operator flips it back on.
+**Pausing.** In an emergency, the pauser calls the CircuitBreaker with the list of contracts to pause. For each contract, the CircuitBreaker verifies the caller is the assigned pauser. If a contract is already paused, it is skipped. Otherwise, the contract is paused for the configured duration and the CircuitBreaker verifies the pause succeeded. The pauser's heartbeat is updated at the end of the call.
 
-**Heartbeat.** The heartbeat is tied to the committee, not to individual contracts. A single heartbeat transaction proves the committee is alive for everything it's responsible for, regardless of how many contracts it covers. This directly addresses V2's redundant prolongation problem: instead of one prolongation per GateSeal, there is one heartbeat per committee.
+**Heartbeat.** The heartbeat is tied to the pauser, not to individual contracts. A single heartbeat transaction proves the pauser is alive for everything it's responsible for, regardless of how many contracts it covers. This directly addresses V2's redundant prolongation problem: instead of one prolongation per GateSeal, there is one heartbeat per pauser.
 
-The heartbeat doesn't gate any functionality. A committee with a stale heartbeat can still trip. It exists solely for observability: monitoring systems watch for stale heartbeats and alert the DAO that a committee may be unresponsive. The reasoning is simple: throwing out the fire extinguisher because you're not sure if it still works is worse than having one that might not work. If the DAO determines a committee is truly dead, it reassigns the committee's contracts to a new committee.
-
-**Kill switch.** The DAO can permanently disable the CircuitBreaker, stopping all interactions. Whether it's a discovered vulnerability, a governance decision, or a migration to a new system, the DAO flips one switch and the contract becomes dead.
+The heartbeat doesn't gate any functionality. A pauser with a stale heartbeat can still pause. It exists solely for observability: monitoring systems watch for stale heartbeats and alert the DAO that a pauser may be unresponsive. The reasoning is simple: throwing out the fire extinguisher because you're not sure if it still works is worse than having one that might not work. If the DAO determines a pauser is truly dead, it reassigns the pauser's contracts to a new pauser.
 
 ## Comparison
 
-| Problem                            | GateSeal V1                                                                                            | GateSeal V2                                                                                                                                               | CircuitBreaker                                                                                                                                                                                         |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Rotation burden**                | DAO performs a full redeploy every year                                                                | Committee prolongs within set windows, but each GateSeal requires its own prolongation; windows are inflexible, and parameters are misconfiguration-prone | One heartbeat per committee confirms liveness (one tx a year total). If committee is not responsive, DAO replaces it with a vote (single vote item). No expiry, no windows, no prolongation parameters |
-| **Pause duration limits**          | Hardcoded 4 to 14 day range at a deploy time. Change in vote timeline requires blueprint redeployment. | Set at deploy time without limits                                                                                                                         | Specified at pause time, capped by global min/max limits (updatable by DAO at any time)                                                                                                                |
-| **Permission re-grants after use** | New address every cycle (every year)                                                                   | New address every cycle but the cycle is significantly extended (up to 5 years)                                                                           | Permanent address. Permission granted once per contract, survives all trip/reset cycles. Doesn't need to be regranted                                                                                  |
-| **Adding new pausable contracts**  | Deploy new GateSeal and hold a role grant vote                                                         | Deploy new GateSeal and hold a role grant vote                                                                                                            | Hold a vote to add a committee-contract pair on the existing CircuitBreake                                                                                                                             |
-| **Scaling**                        | One GateSeal per scope, each with its own lifecycle                                                    | Same, plus each GateSeal needs its own prolongation (multiple txs for the same committee on different GateSeals)                                          | All committees and contracts in one contract. One heartbeat tx per committee                                                                                                                           |
-| **Coverage gaps**                  | Gap between expiry and redeployment                                                                    | Reduced but possible if prolongation window is missed                                                                                                     | No gap between expiration and replacement                                                                                                                                                              |
-| **Swapping a dead committee**      | Deploy new GateSeal, re-grant all permissions                                                          | Same problem                                                                                                                                              | Reassign contracts to new committee address                                                                                                                                                            |
-| **Granular use**                   | Subset selection possible but entire GateSeal is expired                                               | Entire GateSeal is expired                                                                                                                                | Per-contract triggered state. Tripping one preserves the right to trip others                                                                                                                          |
-| **Misconfiguration risk**          | Low, 4 simple parameters                                                                               | High, 8 parameters with interlocking constraints                                                                                                          | Low, global min/max duration plus contract-committee pairs                                                                                                                                             |
+| Problem                              | GateSeal V1                                                                                          | GateSeal V2                                                                                                                                               | CircuitBreaker                                                                                                                                                                                   |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Rotation burden**                  | DAO performs a full redeploy every year                                                              | Committee prolongs within set windows, but each GateSeal requires its own prolongation; windows are inflexible, and parameters are misconfiguration-prone | One heartbeat per pauser confirms liveness (one tx a year total). If pauser is not responsive, DAO replaces it with a vote (single vote item). No expiry, no windows, no prolongation parameters |
+| **Pause duration limits**            | Hardcoded 4 to 14 day range at deploy time. Change in vote timeline requires blueprint redeployment. | Set at deploy time without limits                                                                                                                         | Single global value, updatable by DAO at any time                                                                                                                                                |
+| **Permission re-grants after use**   | New address every cycle (every year)                                                                 | New address every cycle but the cycle is significantly extended (up to 5 years)                                                                           | Permanent address. Permission granted once per contract, survives all pause cycles. Doesn't need to be regranted                                                                                 |
+| **Adding new pausable contracts**    | Deploy new GateSeal and hold a role grant vote                                                       | Deploy new GateSeal and hold a role grant vote                                                                                                            | Hold a vote to add a pauser-contract pair on the existing CircuitBreaker                                                                                                                         |
+| **Scaling**                          | One GateSeal per scope, each with its own lifecycle                                                  | Same, plus each GateSeal needs its own prolongation (multiple txs for the same committee on different GateSeals)                                          | All pausers and contracts in one contract. One heartbeat tx per pauser                                                                                                                           |
+| **Coverage gaps**                    | Gap between expiry and redeployment                                                                  | Reduced but possible if prolongation window is missed                                                                                                     | No gap between expiration and replacement                                                                                                                                                        |
+| **Swapping a dead committee**        | Deploy new GateSeal, re-grant all permissions                                                        | Same problem                                                                                                                                              | Reassign contracts to new pauser address                                                                                                                                                         |
+| **Granular use**                     | Subset selection possible but entire GateSeal is expired                                             | Entire GateSeal is expired                                                                                                                                | Per-contract pausing. Pausing one does not affect the ability to pause others                                                                                                                    |
+| **Misconfiguration risk**            | Low, 4 simple parameters                                                                             | High, 8 parameters with interlocking constraints                                                                                                          | Low, single pause duration plus contract-pauser pairs                                                                                                                                            |
+| **DG's ResealManager compatibility** | Incompatible. GateSeal expires after use, requiring redeployment and role re-grants                  | Same incompatibility, mitigated by longer lifecycle                                                                                                       | Fully compatible. Permanent address and persistent pauser configuration require no changes                                                                                                       |
 
 ### Risks and Mitigations
 
-**Single point of failure.** A bug in CircuitBreaker affects all committees and protected contracts, unlike isolated GateSeals where each has a limited blast radius. Mitigation: the contract is simpler than GateSeal V2 despite doing more, reducing audit surface. The kill switch provides an immediate shutdown if a vulnerability is discovered
+**Single point of failure.** A bug in CircuitBreaker affects all pausers and protected contracts, unlike isolated GateSeals where each has a limited blast radius. Mitigation: the contract is simpler than GateSeal V2 despite doing more, reducing audit surface.
 
-**Broad pause authority.** The CircuitBreaker address holds pause permissions on multiple pausable contracts. Mitigation: the CircuitBreaker can only be tripped by the committee assigned to each contract. The DAO can revoke permission on any contract independently, and the kill switch disables everything at once.
+**Broad pause authority.** The CircuitBreaker address holds pause permissions on multiple pausable contracts. Mitigation: the CircuitBreaker can only pause a contract when called by its assigned pauser. The DAO can revoke permission on any contract independently.
 
-**No forced expiry.** A committee with lost keys retains authority until the DAO explicitly reassigns their contracts. Mitigation: the heartbeat feature surfaces unresponsive committees. The DAO can reassign contracts or remove committees at any time.
+**No forced expiry.** A pauser with lost keys retains authority until the DAO explicitly reassigns their contracts. Mitigation: the heartbeat feature surfaces unresponsive pausers. The DAO can reassign contracts or remove pausers at any time.
 
 ### Architecture
 
@@ -81,84 +82,61 @@ The heartbeat doesn't gate any functionality. A committee with a stale heartbeat
 
 ### Lifecycle
 
-A walkthrough using two committees (**Committee_A** and **Committee_B**) managing four pausable contracts (**WithdrawalQueue**, **ValidatorExitBus**, **VaultHub**, **PredepositGuarantee**).
+A walkthrough using two pausers (**Pauser_A** and **Pauser_B**) managing four pausable contracts (**WithdrawalQueue**, **ValidatorExitBus**, **VaultHub**, **PredepositGuarantee**).
 
 ```
 DEPLOYMENT - dev team
 │
 │  CircuitBreaker is deployed with:
 │    admin = DAO Agent
-│    minPauseDuration = 9 days
-|    maxPauseDuration = 21 days
+│    pauseDuration = 14 days
 │
 CONFIGURATION - DAO
 │
 │  DAO configures the CircuitBreaker in a single vote:
-│    setTripper(WithdrawalQueue, Committee_A)
-│    setTripper(ValidatorExitBus, Committee_A)
-│    setTripper(VaultHub, Committee_B)
-│    setTripper(PredepositGuarantee, Committee_B)
-|    grantRole(WithdrawalQueue.PAUSE_ROLE, CircuitBreaker)
-|    grantRole(ValidatorExitBus.PAUSE_ROLE, CircuitBreaker)
-|    grantRole(VaultHub.PAUSE_ROLE, CircuitBreaker)
-|    grantRole(PredepositGuarantee.PAUSE_ROLE, CircuitBreaker)
+│    setPauser(WithdrawalQueue, Pauser_A)
+│    setPauser(ValidatorExitBus, Pauser_A)
+│    setPauser(VaultHub, Pauser_B)
+│    setPauser(PredepositGuarantee, Pauser_B)
+│    grantRole(WithdrawalQueue.PAUSE_ROLE, CircuitBreaker)
+│    grantRole(ValidatorExitBus.PAUSE_ROLE, CircuitBreaker)
+│    grantRole(VaultHub.PAUSE_ROLE, CircuitBreaker)
+│    grantRole(PredepositGuarantee.PAUSE_ROLE, CircuitBreaker)
 │
 │  State:
-│    WithdrawalQueue      → Committee_A   ✓ ready
-│    ValidatorExitBus     → Committee_A   ✓ ready
-│    VaultHub             → Committee_B   ✓ ready
-│    PredepositGuarantee  → Committee_B   ✓ ready
+│    WithdrawalQueue      → Pauser_A   ✓ ready
+│    ValidatorExitBus     → Pauser_A   ✓ ready
+│    VaultHub             → Pauser_B   ✓ ready
+│    PredepositGuarantee  → Pauser_B   ✓ ready
 │
-HEARTBEAT - committees
+HEARTBEAT - pausers
 │
-│  Committee_A calls heartbeat()
-│  Committee_B calls heartbeat()
+│  Pauser_A calls heartbeat()
+│  Pauser_B calls heartbeat()
 │
-│  Latest heartbeat timestamps are recorded in the contract
+│  Latest heartbeat timestamps are recorded in the contract.
 │
-TRIP - committee
+PAUSE - pauser
 │
 │  Vulnerability discovered affecting ValidatorExitBus.
-│  Committee_A calls trip([ValidatorExitBus], 14 days).
-│  ValidatorExitBus is paused.
+│  Pauser_A calls pause([ValidatorExitBus]).
+│  ValidatorExitBus is paused for 14 days.
+│  Pauser_A's heartbeat is updated.
 │
 │  State:
-│    WithdrawalQueue      → Committee_A   ✓ ready (unaffected)
-│    ValidatorExitBus     → 0x0           ✗ spent
-│    VaultHub             → Committee_B   ✓ ready (unaffected)
-│    PredepositGuarantee  → Committee_B   ✓ ready (unaffected)
-|
-|    Committee_A heartbeat updated to trip timesteamp.
-│
-RESET - DAO vote
-│
-│  Vulnerability patched. DAO resets the tripped contract:
-│    setTripper(ValidatorExitBus,  Committee_A)
-│
-│  State:
-│    WithdrawalQueue      → Committee_A   ✓ ready
-│    ValidatorExitBus     → Committee_A   ✓ ready
-│    VaultHub             → Committee_B   ✓ ready
-│    PredepositGuarantee  → Committee_B   ✓ ready
+│    WithdrawalQueue      → Pauser_A   ✓ ready
+│    ValidatorExitBus     → Pauser_A   ✓ ready (paused for 14 days)
+│    VaultHub             → Pauser_B   ✓ ready
+│    PredepositGuarantee  → Pauser_B   ✓ ready
 │
 RECONFIGURATION (if needed) - DAO vote
 │
 │  Any of these, no redeployment required:
-│    updatePauseDurationBounds(7 days, 28 days)     — change pause bounds
-│    setTripper(ValidatorExitBus, address(0))       — remove tripper
-│    setTripper(PredepositGuarantee, Committee_New) — replace dead committee
+│    setPauseDuration(21 days)                       — change pause duration
+│    setPauser(ValidatorExitBus, address(0))         — remove pauser
+│    setPauser(PredepositGuarantee, Pauser_New)      — replace dead pauser
 │
 │  CircuitBreaker address and all existing permissions remain unchanged.
-│
-KILL SWITCH - DAO vote
-│
-│  Vulnerability in CircuitBreaker itself, or migration to new system.
-│  DAO calls kill(). Contract is permanently disabled:
-│    ✗ no committee can trip
-│    ✗ no configuration can change
-│    ✗ no heartbeat can be sent
-│
-│  DAO revokes PAUSE_ROLE from CircuitBreaker on each pausable at its own pace.
 ▼
 ```
 
@@ -167,83 +145,52 @@ KILL SWITCH - DAO vote
 ```solidity
 contract CircuitBreaker {
     address public immutable admin;
-    bool public dead;
 
-    uint256 public minPauseDurationSeconds; // eg 9 days
-    uint256 public maxPauseDurationSeconds; // eg 21 days
-
-    // might need a reverse mapping for monitoring/view access
-    mapping(address pausable => address committee) public tripper;
-    mapping(address committee => uint256 timestamp) public lastHeartbeat;
+    uint256 public pauseDuration;
+    mapping(address pausable => address pauser) public pausers;
+    mapping(address pauser => uint256 latestHeartbeat) public latestHeartbeats;
 
     modifier onlyAdmin() {
         require(msg.sender == admin, "not admin");
         _;
     }
 
-    modifier notDead() {
-        require(!dead, "dead");
-        _;
-    }
-
-    constructor(
-        address _admin,
-        uint256 _minPauseDurationSeconds,
-        uint256 _maxPauseDurationSeconds
-    ) {
+    constructor(address _admin, uint256 _pauseDuration) {
         admin = _admin;
-        minPauseDurationSeconds = _minPauseDurationSeconds;
-        maxPauseDurationSeconds = _maxPauseDurationSeconds;
+        pauseDuration = _pauseDuration;
     }
 
-    // DAO Agent
-    // setTripper(pausable, ZeroAddress) to remove the tripper
-    function setTripper(
+    function setPauser(
         address _pausable,
-        address _committee
-    ) external onlyAdmin notDead {
-        tripper[_pausable] = _committee;
+        address _pauser
+    ) external onlyAdmin {
+        pausers[_pausable] = _pauser;
     }
 
-    function updatePauseDurationBounds(
-        uint256 _min,
-        uint256 _max
-    ) external onlyAdmin notDead {
-        minPauseDurationSeconds = _min;
-        maxPauseDurationSeconds = _max;
+    function setPauseDuration(uint256 _pauseDuration) external onlyAdmin {
+        pauseDuration = _pauseDuration;
     }
 
-    function kill() external onlyAdmin notDead {
-        killed = true;
-    }
-
-    // Committee
-
-    function trip(
-        address[] calldata _pausables,
-        uint256 _duration
-    ) external notDead {
+    function pause(address[] calldata _pausables) external {
         require(_pausables.length > 0, "empty list");
-        require(_duration >= minPauseDurationSeconds, "duration too short");
-        require(_duration <= maxPauseDurationSeconds, "duration too long");
 
         for (uint256 i = 0; i < _pausables.length; i++) {
             address pausable = _pausables[i];
+            require(pausers[pausable] == msg.sender, "not a pauser");
+
             IPausable ipausable = IPausable(pausable);
 
-            if (ipausable.paused()) continue;
-            require(tripper[pausable] == msg.sender, "not a tripper");
+            if (ipausable.isPaused()) continue;
 
-            ipausable.pauseFor(_duration);
-            require(ipausable.paused(), "pause failed");
-
-            tripper[pausable] = address(0);
-            lastHeartbeat[msg.sender] = block.timestamp;
+            ipausable.pauseFor(pauseDuration);
+            require(ipausable.isPaused(), "pause failed");
         }
+
+        heartbeat();
     }
 
-    function heartbeat() external notDead {
-        lastHeartbeat[msg.sender] = block.timestamp;
+    function heartbeat() public {
+        latestHeartbeats[msg.sender] = block.timestamp;
     }
 }
 ```
