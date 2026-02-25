@@ -17,7 +17,7 @@ The bomb went off. The DAO did get tired of the redeployment process. And after 
 
 ## GateSeals V2
 
-[GateSeals V2](https://www.notion.so/ADR-X-GateSeal-v2-216bf633d0c9809994ebd484c6334e42?pvs=21) were designed around committee-driven prolongation, removing the need for repeated DAO votes when nothing has gone wrong. The committee periodically extends the GateSeal's lifetime within designated windows, proving they're alive and responsive without burdening the DAO. GateSeals V2 were never released or deployed. It was a concept that was considered but ultimately abandoned in favor of a fundamentally different approach.
+GateSeals V2 were designed around committee-driven prolongation, removing the need for repeated DAO votes when nothing has gone wrong. The committee periodically extends the GateSeal's lifetime within designated windows, proving they're alive and responsive without burdening the DAO. GateSeals V2 were never released or deployed. It was a concept that was considered but ultimately abandoned in favor of a fundamentally different approach.
 
 The design carried risks:
 
@@ -35,7 +35,7 @@ CircuitBreaker is a single, permanent contract that manages all emergency pausin
 
 In this analogy, a GateSeal works much like a fuse and CircuitBreaker is, well, a circuit breaker for multiple circuits.
 
-![image.png](attachment:af06302b-5052-4818-b1ca-c69f59b79bb0:image.png)
+![Fuse vs Circuit breaker](img/fuse-vs-circuit-breaker.png)
 
 ### How It Works
 
@@ -78,7 +78,7 @@ The heartbeat doesn't gate any functionality. A pauser with a stale heartbeat ca
 
 ### Architecture
 
-![image.png](attachment:fff07717-fd8d-4366-a9ca-c5a4ab8e4ea2:image.png)
+![architecture](img/architecture.png)
 
 ### Lifecycle
 
