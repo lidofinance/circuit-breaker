@@ -33,7 +33,7 @@ interface IPausable {
 /// @dev    Design decisions:
 ///         - One pauser per pausable. Keeps accountability clear and simple.
 ///         - Single-use pause. The pauser mapping is deleted on use.
-///         - Per-pausable pause duration. Set once at pauser assignment, not cleared on pause.
+///         - Per-pausable pause duration. Set at pauser assignment, cleared together with pauser on use.
 ///         - Heartbeat signal for offchain only.
 ///         - No pauser list. Offchain tracks the list of pausers.
 ///
@@ -42,9 +42,18 @@ interface IPausable {
 ///         - Pausers are multisigs.
 ///         - Admin is DAO Agent or other DAO-controlled executor.
 contract CircuitBreaker {
+    /// @notice Pauser and pause duration for a pausable contract.
+    ///         address (20 bytes) + uint96 (12 bytes) pack into one 32-byte storage slot.
+    struct PauseConfig {
+        address pauser;
+        uint96 duration;
+    }
+
     error ZeroAdmin();
     error ZeroPauseDuration();
     error ZeroPausable();
+    error ZeroPauser();
+    error DurationTooLarge();
     error SenderNotAdmin();
     error EmptyList();
     error SenderNotPauser(address pausable, address pauser);
@@ -52,6 +61,7 @@ contract CircuitBreaker {
 
     event AdminSet(address indexed admin);
     event PauserSet(address indexed pausable, address indexed pauser, uint256 pauseDuration);
+    event PauserRemoved(address indexed pausable);
     event Paused(address indexed pausable);
     event AlreadyPaused(address indexed pausable);
     event Heartbeat(address indexed sender);
@@ -60,13 +70,10 @@ contract CircuitBreaker {
     ///         Assumed to be DAO Agent or other DAO-controlled executor.
     address public immutable ADMIN;
 
-    /// @notice Pause authorization.
-    ///         Pause is single-use, and entry is deleted upon successful use.
-    mapping(address pausable => address pauser) public pausers;
-
-    /// @notice Per-pausable pause duration in seconds.
-    ///         Set by admin when assigning a pauser. Persists across pause events.
-    mapping(address pausable => uint256 pauseDuration) public pauseDurations;
+    /// @notice Per-pausable pauser and pause duration, packed into one storage slot.
+    ///         pauser == address(0) means no pauser is assigned.
+    ///         Entry is deleted upon successful use.
+    mapping(address pausable => PauseConfig) public pauserConfigs;
 
     /// @notice Last timestamp each pauser proved liveness.
     ///         For offchain monitoring only.
@@ -81,48 +88,62 @@ contract CircuitBreaker {
         emit AdminSet(_admin);
     }
 
-    /// @notice Assign, replace or remove a pauser for a pausable contract.
+    /// @notice Assign or replace a pauser for a pausable contract.
     ///         Only 1 pauser per pausable, the previous pauser will be overwritten.
-    ///         A non-zero pause duration must always be provided.
-    ///         The pause duration persists after a pause is triggered and is only
-    ///         updated by a subsequent setPauser call with a new duration.
+    ///         The pause duration is cleared together with the pauser on use.
+    ///         Re-assigning requires providing a new duration.
     /// @param  _pausable Pausable contract to assign a pauser to.
-    /// @param  _pauser Pauser address to assign to the pausable. Set to address(0) to remove.
+    /// @param  _pauser Pauser address to assign to the pausable. Must be non-zero.
     /// @param  _pauseDuration Duration in seconds passed to pauseFor() on trigger. Must be non-zero.
     /// @dev    Function does not check whether CircuitBreaker has the permission to pause.
     function setPauser(address _pausable, address _pauser, uint256 _pauseDuration) external {
         require(msg.sender == ADMIN, SenderNotAdmin());
         require(_pausable != address(0), ZeroPausable());
+        require(_pauser != address(0), ZeroPauser());
         require(_pauseDuration > 0, ZeroPauseDuration());
+        require(_pauseDuration <= type(uint96).max, DurationTooLarge());
 
-        pausers[_pausable] = _pauser;
-        pauseDurations[_pausable] = _pauseDuration;
+        pauserConfigs[_pausable] = PauseConfig(_pauser, uint96(_pauseDuration));
 
         emit PauserSet(_pausable, _pauser, _pauseDuration);
     }
 
+    /// @notice Remove the pauser for a pausable contract and clear its pause duration.
+    /// @param  _pausable Pausable contract to remove the pauser from.
+    function removePauser(address _pausable) external {
+        require(msg.sender == ADMIN, SenderNotAdmin());
+        require(_pausable != address(0), ZeroPausable());
+
+        delete pauserConfigs[_pausable];
+
+        emit PauserRemoved(_pausable);
+    }
+
     /// @notice Record a liveness proof. Called automatically by pause(), but pausers
     ///         can also call it independently to signal they're alive.
-    /// @dev    Callable by any address because the contract does not have the list of pausers.
-    ///         Monitoring must filter by known pauser addresses off-chain.
-    ///         There is absolutely no benefit for strangers to call this function,
-    ///         so there is no reason to guard this function.
-    function heartbeat() public {
-        latestHeartbeats[msg.sender] = block.timestamp;
-        emit Heartbeat(msg.sender);
+    /// @param  _pausable A pausable the caller is registered as pauser for.
+    function heartbeat(address _pausable) external {
+        PauseConfig memory config = pauserConfigs[_pausable];
+        require(msg.sender == config.pauser, SenderNotPauser(_pausable, config.pauser));
+        
+        _heartbeat();
     }
 
     /// @notice Pause one or more pausable contracts.
     ///         CircuitBreaker must have the permission to pause every pausable in the list.
-    ///         Caller must be the assigned pauser for every non-paused pausable in the list.
+    ///         Caller must be the assigned pauser for every pausable in the list, paused or not.
     ///         A pausable already paused is skipped.
     ///         If the pause is successful, the pauser cannot pause the same contract again
     ///         without explicit re-assignment from the admin.
     ///         Skipped contracts do not need re-assignment.
-    ///         Updates the caller's heartbeat timestamp. 
+    ///         Updates the caller's heartbeat timestamp.
     /// @dev    The call is atomic: if any pausable reverts, no pausables in the batch get paused.
     ///         This behavior mirrors the basic EVM principle: the state changes entirely or not at all.
-    ///         Duplicate entries are skipped (emits AlreadyPaused on subsequent occurrences).
+    ///         The auth check runs before the isPaused check, so the caller must be registered for all
+    ///         pausables in the list. This naturally prevents unregistered callers from emitting Heartbeat.
+    ///         Duplicate not-paused entries revert naturally: the config is deleted after the first pause,
+    ///         causing the auth check to fail on the second occurrence. Duplicate already-paused entries
+    ///         emit AlreadyPaused twice but are otherwise harmless.
     ///         The pauser mapping is deleted before calling pauseFor to prevent reentrancy.
     ///         The post-condition (isPaused) verifies the contract is paused. If it's not paused, the call reverts.
     ///         The transaction reverts on the first failed pause immediately without trying the rest of the contracts.
@@ -133,21 +154,29 @@ contract CircuitBreaker {
 
         for (uint256 i = 0; i < _pausables.length; i++) {
             address pausable = _pausables[i];
+
             IPausable ipausable = IPausable(pausable);
+            PauseConfig memory config = pauserConfigs[pausable];
+
+            require(msg.sender == config.pauser, SenderNotPauser(pausable, config.pauser));
 
             if (ipausable.isPaused()) {
                 emit AlreadyPaused(pausable);
             } else {
-                address pauser = pausers[pausable];
-                require(msg.sender == pauser, SenderNotPauser(pausable, pauser));
-                
-                delete pausers[pausable];
-                ipausable.pauseFor(pauseDurations[pausable]);
+                delete pauserConfigs[pausable];
+                ipausable.pauseFor(config.duration);
                 require(ipausable.isPaused(), PauseFailed(pausable));
                 emit Paused(pausable);
             }
         }
 
-        heartbeat();
+        _heartbeat();
+    }
+
+    /// @dev Records liveness without auth check. Used internally by pause() which already
+    ///      validates the caller is a registered pauser.
+    function _heartbeat() private {
+        latestHeartbeats[msg.sender] = block.timestamp;
+        emit Heartbeat(msg.sender);
     }
 }
