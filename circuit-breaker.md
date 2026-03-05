@@ -132,7 +132,7 @@ RECONFIGURATION (if needed) - DAO vote
 │
 │  Any of these, no redeployment required:
 │    setPauser(ValidatorExitBus, Pauser_A, 21 days)  — re-assign with new duration
-│    setPauser(ValidatorExitBus, address(0), 1)      — remove pauser
+│    removePauser(ValidatorExitBus)                  — remove pauser
 │    setPauser(PredepositGuarantee, Pauser_New, 7 days) — replace dead pauser
 │
 │  CircuitBreaker address and all existing permissions remain unchanged.
