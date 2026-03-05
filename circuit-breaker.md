@@ -39,7 +39,7 @@ In this analogy, a GateSeal works much like a fuse and CircuitBreaker is, well, 
 
 ### How It Works
 
-A single CircuitBreaker is deployed with minimal configuration: a pause duration and the DAO Agent address, and is never redeployed. The DAO configures pausers and pausable contracts.
+A single CircuitBreaker is deployed with minimal configuration: just the DAO Agent address, and is never redeployed. The DAO configures pausers and pausable contracts.
 
 **Pausables and pausers.** The DAO registers pausable contracts by pairing each one with a pauser (committee). That's the entire configuration per contract: one mapping from a pausable contract to the pauser responsible for it. The DAO grants pause permission on each protected contract to the CircuitBreaker's address once. Since the address never changes, this permission does not need to be revoked and regranted.
 
@@ -173,12 +173,12 @@ contract CircuitBreaker {
 
         for (uint256 i = 0; i < _pausables.length; i++) {
             address pausable = _pausables[i];
-            require(pausers[pausable] == msg.sender, "not a pauser");
-
             IPausable ipausable = IPausable(pausable);
 
             if (ipausable.isPaused()) continue;
 
+            require(pausers[pausable] == msg.sender, "not a pauser");
+            delete pausers[pausable];
             ipausable.pauseFor(pauseDurations[pausable]);
             require(ipausable.isPaused(), "pause failed");
         }

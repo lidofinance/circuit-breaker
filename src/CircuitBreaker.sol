@@ -4,7 +4,6 @@ pragma solidity 0.8.34;
 
 interface IPausable {
     function isPaused() external view returns (bool);
-    function getResumeSinceTimestamp() external view returns (uint256);
     function pauseFor(uint256 _duration) external;
 }
 
@@ -115,8 +114,8 @@ contract CircuitBreaker {
 
     /// @notice Pause one or more pausable contracts.
     ///         CircuitBreaker must have the permission to pause every pausable in the list.
-    ///         Caller must be the assigned pauser for every pausable in the list.
-    ///         A pausable already paused for a longer-or-equal duration is skipped.
+    ///         Caller must be the assigned pauser for every non-paused pausable in the list.
+    ///         A pausable already paused is skipped.
     ///         If the pause is successful, the pauser cannot pause the same contract again
     ///         without explicit re-assignment from the admin.
     ///         Skipped contracts do not need re-assignment.
@@ -124,6 +123,7 @@ contract CircuitBreaker {
     /// @dev    The call is atomic: if any pausable reverts, no pausables in the batch get paused.
     ///         This behavior mirrors the basic EVM principle: the state changes entirely or not at all.
     ///         Duplicate entries are skipped (emits AlreadyPaused on subsequent occurrences).
+    ///         The pauser mapping is deleted before calling pauseFor to prevent reentrancy.
     ///         The post-condition (isPaused) verifies the contract is paused. If it's not paused, the call reverts.
     ///         The transaction reverts on the first failed pause immediately without trying the rest of the contracts.
     ///         No validation that _pausable is a contract. Calls to non-contract addresses revert.
@@ -133,22 +133,17 @@ contract CircuitBreaker {
 
         for (uint256 i = 0; i < _pausables.length; i++) {
             address pausable = _pausables[i];
-            address pauser = pausers[pausable];
-            require(msg.sender == pauser, SenderNotPauser(pausable, pauser));
-
             IPausable ipausable = IPausable(pausable);
 
-            uint256 duration = pauseDurations[pausable];
-            if (
-                ipausable.isPaused() &&
-                ipausable.getResumeSinceTimestamp() >=
-                block.timestamp + duration
-            ) {
+            if (ipausable.isPaused()) {
                 emit AlreadyPaused(pausable);
             } else {
-                ipausable.pauseFor(duration);
-                require(ipausable.isPaused(), PauseFailed(pausable));
+                address pauser = pausers[pausable];
+                require(msg.sender == pauser, SenderNotPauser(pausable, pauser));
+                
                 delete pausers[pausable];
+                ipausable.pauseFor(pauseDurations[pausable]);
+                require(ipausable.isPaused(), PauseFailed(pausable));
                 emit Paused(pausable);
             }
         }
