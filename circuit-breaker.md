@@ -45,7 +45,7 @@ A single CircuitBreaker is deployed with minimal configuration: a pause duration
 
 **Pausable-pauser relationship.** Each pausable contract is assigned exactly one pauser, but a single pauser can be responsible for multiple pausable contracts. This one-to-one relationship from the pausable's side is a deliberate design choice. Allowing multiple pausers per pausable would introduce ambiguity about who is responsible for which contract, complicate accountability when a pause occurs, and expand the attack surface by multiplying the number of parties authorized to pause a given contract. A single pauser per pausable keeps the authorization model simple and auditable. If the DAO needs to transfer responsibility, it reassigns the pausable to a different pauser in a single operation.
 
-**Pause duration.** A single global pause duration applies to all pausers equally. This value can be updated by the DAO at any time to reflect changes in governance timing (e.g. after Dual Governance introduction).
+**Pause duration.** Each pausable contract has its own pause duration, set by the DAO when assigning a pauser. The duration persists across pause events and is only updated when the DAO reassigns the pauser with a new duration. This allows different contracts to be paused for different lengths of time depending on their risk profile.
 
 **Pausing.** In an emergency, the pauser calls the CircuitBreaker with the list of contracts to pause. For each contract, the CircuitBreaker verifies the caller is the assigned pauser. If a contract is already paused, it is skipped. Otherwise, the contract is paused for the configured duration and the CircuitBreaker verifies the pause succeeded. The pauser's heartbeat is updated at the end of the call.
 
@@ -58,14 +58,14 @@ The heartbeat doesn't gate any functionality. A pauser with a stale heartbeat ca
 | Problem                              | GateSeal V1                                                                                          | GateSeal V2                                                                                                                                               | CircuitBreaker                                                                                                                                                                                   |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Rotation burden**                  | DAO performs a full redeploy every year                                                              | Committee prolongs within set windows, but each GateSeal requires its own prolongation; windows are inflexible, and parameters are misconfiguration-prone | One heartbeat per pauser confirms liveness (one tx a year total). If pauser is not responsive, DAO replaces it with a vote (single vote item). No expiry, no windows, no prolongation parameters |
-| **Pause duration limits**            | Hardcoded 4 to 14 day range at deploy time. Change in vote timeline requires blueprint redeployment. | Set at deploy time without limits                                                                                                                         | Single global value, updatable by DAO at any time                                                                                                                                                |
+| **Pause duration limits**            | Hardcoded 4 to 14 day range at deploy time. Change in vote timeline requires blueprint redeployment. | Set at deploy time without limits                                                                                                                         | Per-pausable value, set at pauser assignment time. Persists across pause events, updatable by DAO at any time via a new setPauser call                                                           |
 | **Permission re-grants after use**   | New address every cycle (every year)                                                                 | New address every cycle but the cycle is significantly extended (up to 5 years)                                                                           | Permanent address. Permission granted once per contract, survives all pause cycles. Doesn't need to be regranted                                                                                 |
 | **Adding new pausable contracts**    | Deploy new GateSeal and hold a role grant vote                                                       | Deploy new GateSeal and hold a role grant vote                                                                                                            | Hold a vote to add a pauser-contract pair on the existing CircuitBreaker                                                                                                                         |
 | **Scaling**                          | One GateSeal per scope, each with its own lifecycle                                                  | Same, plus each GateSeal needs its own prolongation (multiple txs for the same committee on different GateSeals)                                          | All pausers and contracts in one contract. One heartbeat tx per pauser                                                                                                                           |
 | **Coverage gaps**                    | Gap between expiry and redeployment                                                                  | Reduced but possible if prolongation window is missed                                                                                                     | No gap between expiration and replacement                                                                                                                                                        |
 | **Swapping a dead committee**        | Deploy new GateSeal, re-grant all permissions                                                        | Same problem                                                                                                                                              | Reassign contracts to new pauser address                                                                                                                                                         |
 | **Granular use**                     | Subset selection possible but entire GateSeal is expired                                             | Entire GateSeal is expired                                                                                                                                | Per-contract pausing. Pausing one does not affect the ability to pause others                                                                                                                    |
-| **Misconfiguration risk**            | Low, 4 simple parameters                                                                             | High, 8 parameters with interlocking constraints                                                                                                          | Low, single pause duration plus contract-pauser pairs                                                                                                                                            |
+| **Misconfiguration risk**            | Low, 4 simple parameters                                                                             | High, 8 parameters with interlocking constraints                                                                                                          | Low, per-pausable duration plus contract-pauser pairs                                                                                                                                            |
 | **DG's ResealManager compatibility** | Incompatible. GateSeal expires after use, requiring redeployment and role re-grants                  | Same incompatibility, mitigated by longer lifecycle                                                                                                       | Fully compatible. Permanent address and persistent pauser configuration require no changes                                                                                                       |
 
 ### Risks and Mitigations
@@ -89,25 +89,24 @@ DEPLOYMENT - dev team
 │
 │  CircuitBreaker is deployed with:
 │    admin = DAO Agent
-│    pauseDuration = 14 days
 │
 CONFIGURATION - DAO
 │
 │  DAO configures the CircuitBreaker in a single vote:
-│    setPauser(WithdrawalQueue, Pauser_A)
-│    setPauser(ValidatorExitBus, Pauser_A)
-│    setPauser(VaultHub, Pauser_B)
-│    setPauser(PredepositGuarantee, Pauser_B)
+│    setPauser(WithdrawalQueue,     Pauser_A, 14 days)
+│    setPauser(ValidatorExitBus,    Pauser_A, 14 days)
+│    setPauser(VaultHub,            Pauser_B,  7 days)
+│    setPauser(PredepositGuarantee, Pauser_B,  7 days)
 │    grantRole(WithdrawalQueue.PAUSE_ROLE, CircuitBreaker)
 │    grantRole(ValidatorExitBus.PAUSE_ROLE, CircuitBreaker)
 │    grantRole(VaultHub.PAUSE_ROLE, CircuitBreaker)
 │    grantRole(PredepositGuarantee.PAUSE_ROLE, CircuitBreaker)
 │
 │  State:
-│    WithdrawalQueue      → Pauser_A   ✓ ready
-│    ValidatorExitBus     → Pauser_A   ✓ ready
-│    VaultHub             → Pauser_B   ✓ ready
-│    PredepositGuarantee  → Pauser_B   ✓ ready
+│    WithdrawalQueue      → Pauser_A, 14 days   ✓ ready
+│    ValidatorExitBus     → Pauser_A, 14 days   ✓ ready
+│    VaultHub             → Pauser_B,  7 days   ✓ ready
+│    PredepositGuarantee  → Pauser_B,  7 days   ✓ ready
 │
 HEARTBEAT - pausers
 │
@@ -124,17 +123,17 @@ PAUSE - pauser
 │  Pauser_A's heartbeat is updated.
 │
 │  State:
-│    WithdrawalQueue      → Pauser_A   ✓ ready
-│    ValidatorExitBus     → Pauser_A   ✓ ready (paused for 14 days)
-│    VaultHub             → Pauser_B   ✓ ready
-│    PredepositGuarantee  → Pauser_B   ✓ ready
+│    WithdrawalQueue      → Pauser_A, 14 days   ✓ ready
+│    ValidatorExitBus     →           14 days   ✓ ready (paused for 14 days)
+│    VaultHub             → Pauser_B,  7 days   ✓ ready
+│    PredepositGuarantee  → Pauser_B,  7 days   ✓ ready
 │
 RECONFIGURATION (if needed) - DAO vote
 │
 │  Any of these, no redeployment required:
-│    setPauseDuration(21 days)                       — change pause duration
-│    setPauser(ValidatorExitBus, address(0))         — remove pauser
-│    setPauser(PredepositGuarantee, Pauser_New)      — replace dead pauser
+│    setPauser(ValidatorExitBus, Pauser_A, 21 days)  — re-assign with new duration
+│    setPauser(ValidatorExitBus, address(0), 1)      — remove pauser
+│    setPauser(PredepositGuarantee, Pauser_New, 7 days) — replace dead pauser
 │
 │  CircuitBreaker address and all existing permissions remain unchanged.
 ▼
@@ -146,8 +145,8 @@ RECONFIGURATION (if needed) - DAO vote
 contract CircuitBreaker {
     address public immutable admin;
 
-    uint256 public pauseDuration;
     mapping(address pausable => address pauser) public pausers;
+    mapping(address pausable => uint256 pauseDuration) public pauseDurations;
     mapping(address pauser => uint256 latestHeartbeat) public latestHeartbeats;
 
     modifier onlyAdmin() {
@@ -155,20 +154,18 @@ contract CircuitBreaker {
         _;
     }
 
-    constructor(address _admin, uint256 _pauseDuration) {
+    constructor(address _admin) {
         admin = _admin;
-        pauseDuration = _pauseDuration;
     }
 
     function setPauser(
         address _pausable,
-        address _pauser
+        address _pauser,
+        uint256 _pauseDuration
     ) external onlyAdmin {
+        require(_pauseDuration > 0, "zero duration");
         pausers[_pausable] = _pauser;
-    }
-
-    function setPauseDuration(uint256 _pauseDuration) external onlyAdmin {
-        pauseDuration = _pauseDuration;
+        pauseDurations[_pausable] = _pauseDuration;
     }
 
     function pause(address[] calldata _pausables) external {
@@ -182,7 +179,7 @@ contract CircuitBreaker {
 
             if (ipausable.isPaused()) continue;
 
-            ipausable.pauseFor(pauseDuration);
+            ipausable.pauseFor(pauseDurations[pausable]);
             require(ipausable.isPaused(), "pause failed");
         }
 

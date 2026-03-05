@@ -24,7 +24,8 @@ interface IPausable {
 ///         This limits the trust exposure of delegating pause power to a multisig.
 ///
 ///         Each pausable contract has one pauser but a pauser can have multiple pausables.
-///         A single global pause duration applies to all pauses, updatable by the admin.
+///         Each pausable has its own pause duration set by the admin when assigning a pauser.
+///         The pause duration persists across pause events and is only changed by admin.
 ///
 ///         The heartbeat mechanism records pauser's liveness for offchain monitoring in order
 ///         to surface potentially unresponsive committees (e.g. due to lost keys) to make
@@ -33,6 +34,7 @@ interface IPausable {
 /// @dev    Design decisions:
 ///         - One pauser per pausable. Keeps accountability clear and simple.
 ///         - Single-use pause. The pauser mapping is deleted on use.
+///         - Per-pausable pause duration. Set once at pauser assignment, not cleared on pause.
 ///         - Heartbeat signal for offchain only.
 ///         - No pauser list. Offchain tracks the list of pausers.
 ///
@@ -50,8 +52,7 @@ contract CircuitBreaker {
     error PauseFailed(address pausable);
 
     event AdminSet(address indexed admin);
-    event PauseDurationSet(uint256 pauseDuration);
-    event PauserSet(address indexed pausable, address indexed pauser);
+    event PauserSet(address indexed pausable, address indexed pauser, uint256 pauseDuration);
     event Paused(address indexed pausable);
     event AlreadyPaused(address indexed pausable);
     event Heartbeat(address indexed sender);
@@ -60,53 +61,45 @@ contract CircuitBreaker {
     ///         Assumed to be DAO Agent or other DAO-controlled executor.
     address public immutable ADMIN;
 
-    /// @notice Pause duration in seconds. Updatable by admin.
-    uint256 public pauseDuration;
-
     /// @notice Pause authorization.
     ///         Pause is single-use, and entry is deleted upon successful use.
     mapping(address pausable => address pauser) public pausers;
+
+    /// @notice Per-pausable pause duration in seconds.
+    ///         Set by admin when assigning a pauser. Persists across pause events.
+    mapping(address pausable => uint256 pauseDuration) public pauseDurations;
 
     /// @notice Last timestamp each pauser proved liveness.
     ///         For offchain monitoring only.
     mapping(address pauser => uint256 latestHeartbeat) public latestHeartbeats;
 
     /// @param _admin Address that can assign pausers and set pause duration.
-    /// @param _pauseDuration Initial pause duration in seconds.
-    constructor(address _admin, uint256 _pauseDuration) {
+    constructor(address _admin) {
         require(_admin != address(0), ZeroAdmin());
-        require(_pauseDuration > 0, ZeroPauseDuration());
 
         ADMIN = _admin;
-        pauseDuration = _pauseDuration;
 
         emit AdminSet(_admin);
-        emit PauseDurationSet(_pauseDuration);
     }
 
     /// @notice Assign, replace or remove a pauser for a pausable contract.
     ///         Only 1 pauser per pausable, the previous pauser will be overwritten.
+    ///         A non-zero pause duration must always be provided.
+    ///         The pause duration persists after a pause is triggered and is only
+    ///         updated by a subsequent setPauser call with a new duration.
     /// @param  _pausable Pausable contract to assign a pauser to.
     /// @param  _pauser Pauser address to assign to the pausable. Set to address(0) to remove.
+    /// @param  _pauseDuration Duration in seconds passed to pauseFor() on trigger. Must be non-zero.
     /// @dev    Function does not check whether CircuitBreaker has the permission to pause.
-    function setPauser(address _pausable, address _pauser) external {
+    function setPauser(address _pausable, address _pauser, uint256 _pauseDuration) external {
         require(msg.sender == ADMIN, SenderNotAdmin());
         require(_pausable != address(0), ZeroPausable());
-
-        pausers[_pausable] = _pauser;
-        
-        emit PauserSet(_pausable, _pauser);
-    }
-
-    /// @notice Update pause duration.
-    /// @param  _pauseDuration New duration in seconds.
-    function setPauseDuration(uint256 _pauseDuration) external {
-        require(msg.sender == ADMIN, SenderNotAdmin());
         require(_pauseDuration > 0, ZeroPauseDuration());
 
-        pauseDuration = _pauseDuration;
-        
-        emit PauseDurationSet(_pauseDuration);
+        pausers[_pausable] = _pauser;
+        pauseDurations[_pausable] = _pauseDuration;
+
+        emit PauserSet(_pausable, _pauser, _pauseDuration);
     }
 
     /// @notice Record a liveness proof. Called automatically by pause(), but pausers
@@ -145,14 +138,15 @@ contract CircuitBreaker {
 
             IPausable ipausable = IPausable(pausable);
 
+            uint256 duration = pauseDurations[pausable];
             if (
                 ipausable.isPaused() &&
                 ipausable.getResumeSinceTimestamp() >=
-                block.timestamp + pauseDuration
+                block.timestamp + duration
             ) {
                 emit AlreadyPaused(pausable);
             } else {
-                ipausable.pauseFor(pauseDuration);
+                ipausable.pauseFor(duration);
                 require(ipausable.isPaused(), PauseFailed(pausable));
                 delete pausers[pausable];
                 emit Paused(pausable);
