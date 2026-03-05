@@ -119,26 +119,29 @@ contract CircuitBreaker {
 
     /// @notice Record a liveness proof. Called automatically by pause(), but pausers
     ///         can also call it independently to signal they're alive.
-    /// @dev    Callable by any address because the contract does not have the list of pausers.
-    ///         Monitoring must filter by known pauser addresses off-chain.
-    ///         There is absolutely no benefit for strangers to call this function,
-    ///         so there is no reason to guard this function.
-    function heartbeat() public {
-        latestHeartbeats[msg.sender] = block.timestamp;
-        emit Heartbeat(msg.sender);
+    /// @param  _pausable A pausable the caller is registered as pauser for.
+    function heartbeat(address _pausable) external {
+        PauseConfig memory config = pauserConfigs[_pausable];
+        require(msg.sender == config.pauser, SenderNotPauser(_pausable, config.pauser));
+        
+        _heartbeat();
     }
 
     /// @notice Pause one or more pausable contracts.
     ///         CircuitBreaker must have the permission to pause every pausable in the list.
-    ///         Caller must be the assigned pauser for every non-paused pausable in the list.
+    ///         Caller must be the assigned pauser for every pausable in the list, paused or not.
     ///         A pausable already paused is skipped.
     ///         If the pause is successful, the pauser cannot pause the same contract again
     ///         without explicit re-assignment from the admin.
     ///         Skipped contracts do not need re-assignment.
-    ///         Updates the caller's heartbeat timestamp. 
+    ///         Updates the caller's heartbeat timestamp.
     /// @dev    The call is atomic: if any pausable reverts, no pausables in the batch get paused.
     ///         This behavior mirrors the basic EVM principle: the state changes entirely or not at all.
-    ///         Duplicate entries are skipped (emits AlreadyPaused on subsequent occurrences).
+    ///         The auth check runs before the isPaused check, so the caller must be registered for all
+    ///         pausables in the list. This naturally prevents unregistered callers from emitting Heartbeat.
+    ///         Duplicate not-paused entries revert naturally: the config is deleted after the first pause,
+    ///         causing the auth check to fail on the second occurrence. Duplicate already-paused entries
+    ///         emit AlreadyPaused twice but are otherwise harmless.
     ///         The pauser mapping is deleted before calling pauseFor to prevent reentrancy.
     ///         The post-condition (isPaused) verifies the contract is paused. If it's not paused, the call reverts.
     ///         The transaction reverts on the first failed pause immediately without trying the rest of the contracts.
@@ -149,14 +152,15 @@ contract CircuitBreaker {
 
         for (uint256 i = 0; i < _pausables.length; i++) {
             address pausable = _pausables[i];
+
             IPausable ipausable = IPausable(pausable);
+            PauseConfig memory config = pauserConfigs[pausable];
+
+            require(msg.sender == config.pauser, SenderNotPauser(pausable, config.pauser));
 
             if (ipausable.isPaused()) {
                 emit AlreadyPaused(pausable);
             } else {
-                PauseConfig memory config = pauserConfigs[pausable];
-                require(msg.sender == config.pauser, SenderNotPauser(pausable, config.pauser));
-
                 delete pauserConfigs[pausable];
                 ipausable.pauseFor(config.duration);
                 require(ipausable.isPaused(), PauseFailed(pausable));
@@ -164,6 +168,13 @@ contract CircuitBreaker {
             }
         }
 
-        heartbeat();
+        _heartbeat();
+    }
+
+    /// @dev Records liveness without auth check. Used internally by pause() which already
+    ///      validates the caller is a registered pauser.
+    function _heartbeat() private {
+        latestHeartbeats[msg.sender] = block.timestamp;
+        emit Heartbeat(msg.sender);
     }
 }

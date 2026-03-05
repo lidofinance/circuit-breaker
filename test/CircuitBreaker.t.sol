@@ -301,13 +301,15 @@ contract CircuitBreakerTest is Test {
         vm.prank(pauser);
         cb.pause(list);
 
-        // While still paused: emits AlreadyPaused, does not revert
-        vm.expectEmit(true, false, false, false);
-        emit CircuitBreaker.AlreadyPaused(address(mockPausable));
+        // Pauser config was deleted; auth check fires before isPaused, so calling pause
+        // reverts whether the contract is still paused or not.
+        vm.expectRevert(
+            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), address(0))
+        );
         vm.prank(pauser);
         cb.pause(list);
 
-        // Simulate pause expiry; pauser mapping was deleted — cannot pause again
+        // Same after pause expiry.
         mockPausable.setState(false);
         vm.expectRevert(
             abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), address(0))
@@ -513,24 +515,25 @@ contract CircuitBreakerTest is Test {
     // pause – duplicate entries in the list
     // =========================================================================
 
-    function test_Pause_DuplicatePausable_SecondOccurrenceSkipped() public {
-        // First iteration pauses and deletes pauser.
-        // Second iteration finds isPaused() == true → AlreadyPaused → no revert.
+    function test_Pause_DuplicateNotPaused_RevertsNaturally() public {
+        // First iteration pauses and deletes the config.
+        // Second iteration: auth check fires before isPaused; config is gone → SenderNotPauser.
+        // The entire tx reverts, rolling back the first pause too.
         _assignPauser(address(mockPausable), pauser);
 
         address[] memory list = new address[](2);
         list[0] = address(mockPausable);
         list[1] = address(mockPausable);
 
-        vm.expectEmit(true, false, false, false);
-        emit CircuitBreaker.Paused(address(mockPausable));
-        vm.expectEmit(true, false, false, false);
-        emit CircuitBreaker.AlreadyPaused(address(mockPausable));
+        vm.expectRevert(
+            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), address(0))
+        );
         vm.prank(pauser);
         cb.pause(list);
 
-        assertTrue(mockPausable.isPaused());
-        assertEq(_pauserOf(address(mockPausable)), address(0));
+        // Entire tx reverted — first pause rolled back.
+        assertFalse(mockPausable.isPaused());
+        assertEq(_pauserOf(address(mockPausable)), pauser);
     }
 
     function test_Pause_DuplicatePausable_AlreadyPaused_BothEmitAlreadyPaused() public {
@@ -579,48 +582,65 @@ contract CircuitBreakerTest is Test {
     // =========================================================================
 
     function test_Heartbeat_SetsLatestHeartbeat() public {
+        _assignPauser(address(mockPausable), pauser);
         uint256 ts = block.timestamp;
         vm.prank(pauser);
-        cb.heartbeat();
+        cb.heartbeat(address(mockPausable));
         assertEq(cb.latestHeartbeats(pauser), ts);
     }
 
     function test_Heartbeat_EmitsHeartbeat() public {
+        _assignPauser(address(mockPausable), pauser);
         vm.expectEmit(true, false, false, false);
         emit CircuitBreaker.Heartbeat(pauser);
         vm.prank(pauser);
-        cb.heartbeat();
+        cb.heartbeat(address(mockPausable));
     }
 
     function test_Heartbeat_UpdatesTimestamp_OnSubsequentCall() public {
+        _assignPauser(address(mockPausable), pauser);
         vm.prank(pauser);
-        cb.heartbeat();
+        cb.heartbeat(address(mockPausable));
 
         vm.warp(block.timestamp + 1 hours);
         uint256 laterTs = block.timestamp;
         vm.prank(pauser);
-        cb.heartbeat();
+        cb.heartbeat(address(mockPausable));
 
         assertEq(cb.latestHeartbeats(pauser), laterTs);
     }
 
-    function test_Heartbeat_CallableByAnyAddress() public {
-        uint256 ts = block.timestamp;
+    function test_Heartbeat_RevertIf_SenderNotPauser() public {
+        _assignPauser(address(mockPausable), pauser);
+        vm.expectRevert(
+            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), pauser)
+        );
         vm.prank(stranger);
-        cb.heartbeat();
-        assertEq(cb.latestHeartbeats(stranger), ts);
+        cb.heartbeat(address(mockPausable));
+    }
+
+    function test_Heartbeat_RevertIf_NoPauserAssigned() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), address(0))
+        );
+        vm.prank(pauser);
+        cb.heartbeat(address(mockPausable));
     }
 
     function test_Heartbeat_TracksEachCallerIndependently() public {
+        MockPausable mp2 = new MockPausable();
         address pauser2 = makeAddr("pauser2");
+        _assignPauser(address(mockPausable), pauser);
+        vm.prank(admin);
+        cb.setPauser(address(mp2), pauser2, PAUSE_DURATION);
 
         vm.prank(pauser);
-        cb.heartbeat();
+        cb.heartbeat(address(mockPausable));
         uint256 ts1 = block.timestamp;
 
         vm.warp(block.timestamp + 500);
         vm.prank(pauser2);
-        cb.heartbeat();
+        cb.heartbeat(address(mp2));
         uint256 ts2 = block.timestamp;
 
         assertEq(cb.latestHeartbeats(pauser), ts1);

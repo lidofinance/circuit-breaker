@@ -18,7 +18,7 @@ If a contract is already paused, `pause()` skips it and preserves the existing p
 
 Pause durations are per-pausable and updatable by the admin.
 
-Pausers can call `heartbeat()` to record a liveness timestamp (it's also called automatically on `pause()`). This is purely for off-chain monitoring.
+Pausers can call `heartbeat(pausable)` with any pausable they're registered for to record a liveness timestamp (it's also called automatically on `pause()`). The call verifies the caller is the registered pauser, so only known pausers can emit the signal. This is purely for off-chain monitoring.
 
 ## vs. GateSeal
 

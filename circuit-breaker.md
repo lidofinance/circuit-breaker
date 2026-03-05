@@ -47,7 +47,7 @@ A single CircuitBreaker is deployed with minimal configuration: just the DAO Age
 
 **Pause duration.** Each pausable contract has its own pause duration, set by the DAO when assigning a pauser. The duration persists across pause events and is only updated when the DAO reassigns the pauser with a new duration. This allows different contracts to be paused for different lengths of time depending on their risk profile.
 
-**Pausing.** In an emergency, the pauser calls the CircuitBreaker with the list of contracts to pause. For each contract, the CircuitBreaker verifies the caller is the assigned pauser. If a contract is already paused, it is skipped. Otherwise, the contract is paused for the configured duration and the CircuitBreaker verifies the pause succeeded. The pauser's heartbeat is updated at the end of the call.
+**Pausing.** In an emergency, the pauser calls the CircuitBreaker with the list of contracts to pause. For each contract, the CircuitBreaker verifies the caller is the assigned pauser — whether or not the contract is already paused. If a contract is already paused, it is skipped without re-pausing. Otherwise, the contract is paused for the configured duration and the CircuitBreaker verifies the pause succeeded. The pauser's heartbeat is updated at the end of the call.
 
 **Heartbeat.** The heartbeat is tied to the pauser, not to individual contracts. A single heartbeat transaction proves the pauser is alive for everything it's responsible for, regardless of how many contracts it covers. This directly addresses V2's redundant prolongation problem: instead of one prolongation per GateSeal, there is one heartbeat per pauser.
 
@@ -110,8 +110,8 @@ CONFIGURATION - DAO
 │
 HEARTBEAT - pausers
 │
-│  Pauser_A calls heartbeat()
-│  Pauser_B calls heartbeat()
+│  Pauser_A calls heartbeat(WithdrawalQueue)
+│  Pauser_B calls heartbeat(VaultHub)
 │
 │  Latest heartbeat timestamps are recorded in the contract.
 │
@@ -137,57 +137,4 @@ RECONFIGURATION (if needed) - DAO vote
 │
 │  CircuitBreaker address and all existing permissions remain unchanged.
 ▼
-```
-
-### Example simplified implementation
-
-```solidity
-contract CircuitBreaker {
-    address public immutable admin;
-
-    mapping(address pausable => address pauser) public pausers;
-    mapping(address pausable => uint256 pauseDuration) public pauseDurations;
-    mapping(address pauser => uint256 latestHeartbeat) public latestHeartbeats;
-
-    modifier onlyAdmin() {
-        require(msg.sender == admin, "not admin");
-        _;
-    }
-
-    constructor(address _admin) {
-        admin = _admin;
-    }
-
-    function setPauser(
-        address _pausable,
-        address _pauser,
-        uint256 _pauseDuration
-    ) external onlyAdmin {
-        require(_pauseDuration > 0, "zero duration");
-        pausers[_pausable] = _pauser;
-        pauseDurations[_pausable] = _pauseDuration;
-    }
-
-    function pause(address[] calldata _pausables) external {
-        require(_pausables.length > 0, "empty list");
-
-        for (uint256 i = 0; i < _pausables.length; i++) {
-            address pausable = _pausables[i];
-            IPausable ipausable = IPausable(pausable);
-
-            if (ipausable.isPaused()) continue;
-
-            require(pausers[pausable] == msg.sender, "not a pauser");
-            delete pausers[pausable];
-            ipausable.pauseFor(pauseDurations[pausable]);
-            require(ipausable.isPaused(), "pause failed");
-        }
-
-        heartbeat();
-    }
-
-    function heartbeat() public {
-        latestHeartbeats[msg.sender] = block.timestamp;
-    }
-}
 ```
