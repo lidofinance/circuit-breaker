@@ -109,13 +109,13 @@ contract CircuitBreakerTest is Test {
     function test_SetPauser_SetsPauser() public {
         vm.prank(admin);
         cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
-        assertEq(cb.pausers(address(mockPausable)), pauser);
+        assertEq(_pauserOf(address(mockPausable)), pauser);
     }
 
     function test_SetPauser_SetsPauseDuration() public {
         vm.prank(admin);
         cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
-        assertEq(cb.pauseDurations(address(mockPausable)), PAUSE_DURATION);
+        assertEq(_durationOf(address(mockPausable)), PAUSE_DURATION);
     }
 
     function test_SetPauser_EmitsPauserSet() public {
@@ -132,16 +132,14 @@ contract CircuitBreakerTest is Test {
         cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
         cb.setPauser(address(mockPausable), pauser2, newDuration);
         vm.stopPrank();
-        assertEq(cb.pausers(address(mockPausable)), pauser2);
-        assertEq(cb.pauseDurations(address(mockPausable)), newDuration);
+        assertEq(_pauserOf(address(mockPausable)), pauser2);
+        assertEq(_durationOf(address(mockPausable)), newDuration);
     }
 
-    function test_SetPauser_RemovesPauser_WhenZeroAddress() public {
-        vm.startPrank(admin);
-        cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
+    function test_SetPauser_RevertIf_ZeroPauser() public {
+        vm.expectRevert(CircuitBreaker.ZeroPauser.selector);
+        vm.prank(admin);
         cb.setPauser(address(mockPausable), address(0), PAUSE_DURATION);
-        vm.stopPrank();
-        assertEq(cb.pausers(address(mockPausable)), address(0));
     }
 
     function test_SetPauser_RevertIf_SenderNotAdmin() public {
@@ -160,6 +158,47 @@ contract CircuitBreakerTest is Test {
         vm.expectRevert(CircuitBreaker.ZeroPauseDuration.selector);
         vm.prank(admin);
         cb.setPauser(address(mockPausable), pauser, 0);
+    }
+
+    // =========================================================================
+    // removePauser
+    // =========================================================================
+
+    function test_RemovePauser_ClearsPauser() public {
+        vm.startPrank(admin);
+        cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
+        cb.removePauser(address(mockPausable));
+        vm.stopPrank();
+        assertEq(_pauserOf(address(mockPausable)), address(0));
+    }
+
+    function test_RemovePauser_ClearsPauseDuration() public {
+        vm.startPrank(admin);
+        cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
+        cb.removePauser(address(mockPausable));
+        vm.stopPrank();
+        assertEq(_durationOf(address(mockPausable)), 0);
+    }
+
+    function test_RemovePauser_EmitsPauserRemoved() public {
+        vm.startPrank(admin);
+        cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
+        vm.expectEmit(true, false, false, false);
+        emit CircuitBreaker.PauserRemoved(address(mockPausable));
+        cb.removePauser(address(mockPausable));
+        vm.stopPrank();
+    }
+
+    function test_RemovePauser_RevertIf_SenderNotAdmin() public {
+        vm.expectRevert(CircuitBreaker.SenderNotAdmin.selector);
+        vm.prank(stranger);
+        cb.removePauser(address(mockPausable));
+    }
+
+    function test_RemovePauser_RevertIf_ZeroPausable() public {
+        vm.expectRevert(CircuitBreaker.ZeroPausable.selector);
+        vm.prank(admin);
+        cb.removePauser(address(0));
     }
 
     // =========================================================================
@@ -227,7 +266,7 @@ contract CircuitBreakerTest is Test {
         vm.prank(pauser);
         cb.pause(list);
 
-        assertEq(cb.pausers(address(mockPausable)), address(0));
+        assertEq(_pauserOf(address(mockPausable)), address(0));
     }
 
     function test_Pause_UpdatesHeartbeat_AfterSuccess() public {
@@ -281,16 +320,15 @@ contract CircuitBreakerTest is Test {
     // pause – pause duration persists after pause
     // =========================================================================
 
-    function test_Pause_DurationPersistsAfterPause() public {
+    function test_Pause_DeletesBothFieldsAfterSuccess() public {
         _assignPauser(address(mockPausable), pauser);
         address[] memory list = _list(address(mockPausable));
 
         vm.prank(pauser);
         cb.pause(list);
 
-        // Pauser is consumed but duration remains
-        assertEq(cb.pausers(address(mockPausable)), address(0));
-        assertEq(cb.pauseDurations(address(mockPausable)), PAUSE_DURATION);
+        assertEq(_pauserOf(address(mockPausable)), address(0));
+        assertEq(_durationOf(address(mockPausable)), 0);
     }
 
     // =========================================================================
@@ -333,7 +371,7 @@ contract CircuitBreakerTest is Test {
         cb.pause(list);
 
         // Pauser must survive because the AlreadyPaused branch skips the delete
-        assertEq(cb.pausers(address(mockPausable)), pauser);
+        assertEq(_pauserOf(address(mockPausable)), pauser);
     }
 
     function test_Pause_AlreadyPaused_StillCallsHeartbeat() public {
@@ -396,8 +434,8 @@ contract CircuitBreakerTest is Test {
 
         assertTrue(mockPausable.isPaused());
         assertTrue(mp2.isPaused());
-        assertEq(cb.pausers(address(mockPausable)), address(0));
-        assertEq(cb.pausers(address(mp2)), address(0));
+        assertEq(_pauserOf(address(mockPausable)), address(0));
+        assertEq(_pauserOf(address(mp2)), address(0));
     }
 
     function test_Pause_MixedBatch_PausedAndAlreadyPaused() public {
@@ -421,8 +459,8 @@ contract CircuitBreakerTest is Test {
         cb.pause(list);
 
         assertTrue(mockPausable.isPaused());
-        assertEq(cb.pausers(address(mockPausable)), address(0)); // consumed
-        assertEq(cb.pausers(address(mp2)), pauser);              // not consumed
+        assertEq(_pauserOf(address(mockPausable)), address(0)); // consumed
+        assertEq(_pauserOf(address(mp2)), pauser);              // not consumed
     }
 
     // =========================================================================
@@ -447,7 +485,7 @@ contract CircuitBreakerTest is Test {
 
         // Tx reverted → first item's effects are rolled back
         assertFalse(mockPausable.isPaused());
-        assertEq(cb.pausers(address(mockPausable)), pauser);
+        assertEq(_pauserOf(address(mockPausable)), pauser);
     }
 
     function test_Pause_Batch_Atomic_RevertsOnFirstItem_SenderNotPauser() public {
@@ -468,7 +506,7 @@ contract CircuitBreakerTest is Test {
 
         // mp2 must remain untouched
         assertFalse(mp2.isPaused());
-        assertEq(cb.pausers(address(mp2)), pauser);
+        assertEq(_pauserOf(address(mp2)), pauser);
     }
 
     // =========================================================================
@@ -492,7 +530,7 @@ contract CircuitBreakerTest is Test {
         cb.pause(list);
 
         assertTrue(mockPausable.isPaused());
-        assertEq(cb.pausers(address(mockPausable)), address(0));
+        assertEq(_pauserOf(address(mockPausable)), address(0));
     }
 
     function test_Pause_DuplicatePausable_AlreadyPaused_BothEmitAlreadyPaused() public {
@@ -533,7 +571,7 @@ contract CircuitBreakerTest is Test {
 
         // Atomicity: first item rolled back
         assertFalse(mockPausable.isPaused());
-        assertEq(cb.pausers(address(mockPausable)), pauser);
+        assertEq(_pauserOf(address(mockPausable)), pauser);
     }
 
     // =========================================================================
@@ -596,6 +634,14 @@ contract CircuitBreakerTest is Test {
     function _assignPauser(address pausable, address _pauser) internal {
         vm.prank(admin);
         cb.setPauser(pausable, _pauser, PAUSE_DURATION);
+    }
+
+    function _pauserOf(address pausable) internal view returns (address p) {
+        (p,) = cb.pauserConfigs(pausable);
+    }
+
+    function _durationOf(address pausable) internal view returns (uint96 d) {
+        (, d) = cb.pauserConfigs(pausable);
     }
 
     function _list(address a) internal pure returns (address[] memory list) {
