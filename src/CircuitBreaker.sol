@@ -53,6 +53,7 @@ contract CircuitBreaker {
     error ZeroPauseDuration();
     error ZeroPausable();
     error ZeroPauser();
+    error DurationTooLarge();
     error SenderNotAdmin();
     error EmptyList();
     error SenderNotPauser(address pausable, address pauser);
@@ -100,6 +101,7 @@ contract CircuitBreaker {
         require(_pausable != address(0), ZeroPausable());
         require(_pauser != address(0), ZeroPauser());
         require(_pauseDuration > 0, ZeroPauseDuration());
+        require(_pauseDuration <= type(uint96).max, DurationTooLarge());
 
         pauserConfigs[_pausable] = PauseConfig(_pauser, uint96(_pauseDuration));
 

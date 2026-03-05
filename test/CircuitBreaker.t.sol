@@ -160,6 +160,12 @@ contract CircuitBreakerTest is Test {
         cb.setPauser(address(mockPausable), pauser, 0);
     }
 
+    function test_SetPauser_RevertIf_DurationTooLarge() public {
+        vm.expectRevert(CircuitBreaker.DurationTooLarge.selector);
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), pauser, uint256(type(uint96).max) + 1);
+    }
+
     // =========================================================================
     // removePauser
     // =========================================================================
