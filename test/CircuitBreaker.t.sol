@@ -163,7 +163,7 @@ contract CircuitBreakerTest is Test {
     function test_SetPauser_RevertIf_DurationTooLarge() public {
         vm.expectRevert(CircuitBreaker.DurationTooLarge.selector);
         vm.prank(admin);
-        cb.setPauser(address(mockPausable), pauser, uint256(type(uint96).max) + 1);
+        cb.setPauser(address(mockPausable), pauser, uint256(type(uint64).max) + 1);
     }
 
     // =========================================================================
@@ -211,33 +211,25 @@ contract CircuitBreakerTest is Test {
     // pause – input validation
     // =========================================================================
 
-    function test_Pause_RevertIf_EmptyList() public {
-        vm.expectRevert(CircuitBreaker.EmptyList.selector);
-        vm.prank(pauser);
-        cb.pause(new address[](0));
-    }
-
     function test_Pause_RevertIf_SenderNotPauser_NoPauserAssigned() public {
         // pausers[pausable] == address(0), which never equals a real caller
-        address[] memory list = _list(address(mockPausable));
         vm.expectRevert(
             abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), address(0))
         );
         vm.prank(pauser);
-        cb.pause(list);
+        cb.pause(address(mockPausable));
     }
 
     function test_Pause_RevertIf_SenderNotPauser_WrongCaller() public {
         vm.prank(admin);
         cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
 
-        address[] memory list = _list(address(mockPausable));
         // pauser is the assigned address; stranger is the wrong caller
         vm.expectRevert(
             abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), pauser)
         );
         vm.prank(stranger);
-        cb.pause(list);
+        cb.pause(address(mockPausable));
     }
 
     // =========================================================================
@@ -246,20 +238,18 @@ contract CircuitBreakerTest is Test {
 
     function test_Pause_EmitsPaused() public {
         _assignPauser(address(mockPausable), pauser);
-        address[] memory list = _list(address(mockPausable));
 
         vm.expectEmit(true, false, false, false);
         emit CircuitBreaker.Paused(address(mockPausable));
         vm.prank(pauser);
-        cb.pause(list);
+        cb.pause(address(mockPausable));
     }
 
     function test_Pause_CallsPauseFor_WithConfiguredDuration() public {
         _assignPauser(address(mockPausable), pauser);
-        address[] memory list = _list(address(mockPausable));
 
         vm.prank(pauser);
-        cb.pause(list);
+        cb.pause(address(mockPausable));
 
         assertTrue(mockPausable.isPaused());
         assertEq(mockPausable.getResumeSinceTimestamp(), block.timestamp + PAUSE_DURATION);
@@ -267,33 +257,30 @@ contract CircuitBreakerTest is Test {
 
     function test_Pause_DeletesPauser_AfterSuccess() public {
         _assignPauser(address(mockPausable), pauser);
-        address[] memory list = _list(address(mockPausable));
 
         vm.prank(pauser);
-        cb.pause(list);
+        cb.pause(address(mockPausable));
 
         assertEq(_pauserOf(address(mockPausable)), address(0));
     }
 
     function test_Pause_UpdatesHeartbeat_AfterSuccess() public {
         _assignPauser(address(mockPausable), pauser);
-        address[] memory list = _list(address(mockPausable));
 
         uint256 ts = block.timestamp;
         vm.prank(pauser);
-        cb.pause(list);
+        cb.pause(address(mockPausable));
 
         assertEq(cb.latestHeartbeats(pauser), ts);
     }
 
     function test_Pause_EmitsHeartbeat_AfterSuccess() public {
         _assignPauser(address(mockPausable), pauser);
-        address[] memory list = _list(address(mockPausable));
 
         vm.expectEmit(true, false, false, false);
         emit CircuitBreaker.Heartbeat(pauser);
         vm.prank(pauser);
-        cb.pause(list);
+        cb.pause(address(mockPausable));
     }
 
     // =========================================================================
@@ -302,10 +289,9 @@ contract CircuitBreakerTest is Test {
 
     function test_Pause_CannotPauseAgain_AfterPauserConsumed() public {
         _assignPauser(address(mockPausable), pauser);
-        address[] memory list = _list(address(mockPausable));
 
         vm.prank(pauser);
-        cb.pause(list);
+        cb.pause(address(mockPausable));
 
         // Pauser config was deleted; auth check fires before isPaused, so calling pause
         // reverts whether the contract is still paused or not.
@@ -313,7 +299,7 @@ contract CircuitBreakerTest is Test {
             abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), address(0))
         );
         vm.prank(pauser);
-        cb.pause(list);
+        cb.pause(address(mockPausable));
 
         // Same after pause expiry.
         mockPausable.setState(false);
@@ -321,7 +307,7 @@ contract CircuitBreakerTest is Test {
             abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), address(0))
         );
         vm.prank(pauser);
-        cb.pause(list);
+        cb.pause(address(mockPausable));
     }
 
     // =========================================================================
@@ -330,10 +316,9 @@ contract CircuitBreakerTest is Test {
 
     function test_Pause_DeletesBothFieldsAfterSuccess() public {
         _assignPauser(address(mockPausable), pauser);
-        address[] memory list = _list(address(mockPausable));
 
         vm.prank(pauser);
-        cb.pause(list);
+        cb.pause(address(mockPausable));
 
         assertEq(_pauserOf(address(mockPausable)), address(0));
         assertEq(_durationOf(address(mockPausable)), 0);
@@ -348,9 +333,8 @@ contract CircuitBreakerTest is Test {
         vm.prank(admin);
         cb.setPauser(address(mockPausable), pauser, customDuration);
 
-        address[] memory list = _list(address(mockPausable));
         vm.prank(pauser);
-        cb.pause(list);
+        cb.pause(address(mockPausable));
 
         assertEq(mockPausable.getResumeSinceTimestamp(), block.timestamp + customDuration);
     }
@@ -362,21 +346,19 @@ contract CircuitBreakerTest is Test {
     function test_Pause_EmitsAlreadyPaused_WhenPaused() public {
         mockPausable.setState(true);
         _assignPauser(address(mockPausable), pauser);
-        address[] memory list = _list(address(mockPausable));
 
         vm.expectEmit(true, false, false, false);
         emit CircuitBreaker.AlreadyPaused(address(mockPausable));
         vm.prank(pauser);
-        cb.pause(list);
+        cb.pause(address(mockPausable));
     }
 
     function test_Pause_AlreadyPaused_DoesNotDeletePauser() public {
         mockPausable.setState(true);
         _assignPauser(address(mockPausable), pauser);
-        address[] memory list = _list(address(mockPausable));
 
         vm.prank(pauser);
-        cb.pause(list);
+        cb.pause(address(mockPausable));
 
         // Pauser must survive because the AlreadyPaused branch skips the delete
         assertEq(_pauserOf(address(mockPausable)), pauser);
@@ -385,11 +367,10 @@ contract CircuitBreakerTest is Test {
     function test_Pause_AlreadyPaused_StillCallsHeartbeat() public {
         mockPausable.setState(true);
         _assignPauser(address(mockPausable), pauser);
-        address[] memory list = _list(address(mockPausable));
 
         uint256 ts = block.timestamp;
         vm.prank(pauser);
-        cb.pause(list);
+        cb.pause(address(mockPausable));
 
         assertEq(cb.latestHeartbeats(pauser), ts);
     }
@@ -400,13 +381,12 @@ contract CircuitBreakerTest is Test {
 
     function test_Pause_RevertIf_PauseFailed() public {
         _assignPauser(address(mockPauseFails), pauser);
-        address[] memory list = _list(address(mockPauseFails));
 
         vm.expectRevert(
             abi.encodeWithSelector(CircuitBreaker.PauseFailed.selector, address(mockPauseFails))
         );
         vm.prank(pauser);
-        cb.pause(list);
+        cb.pause(address(mockPauseFails));
     }
 
     // =========================================================================
@@ -415,172 +395,10 @@ contract CircuitBreakerTest is Test {
 
     function test_Pause_RevertIf_PauseForReverts() public {
         _assignPauser(address(mockPauseReverts), pauser);
-        address[] memory list = _list(address(mockPauseReverts));
 
         vm.expectRevert("pauseFor: forced revert");
         vm.prank(pauser);
-        cb.pause(list);
-    }
-
-    // =========================================================================
-    // pause – batch with multiple pausables
-    // =========================================================================
-
-    function test_Pause_MultiPausable_AllPaused() public {
-        MockPausable mp2 = new MockPausable();
-        vm.startPrank(admin);
-        cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
-        cb.setPauser(address(mp2), pauser, PAUSE_DURATION);
-        vm.stopPrank();
-
-        address[] memory list = new address[](2);
-        list[0] = address(mockPausable);
-        list[1] = address(mp2);
-
-        vm.prank(pauser);
-        cb.pause(list);
-
-        assertTrue(mockPausable.isPaused());
-        assertTrue(mp2.isPaused());
-        assertEq(_pauserOf(address(mockPausable)), address(0));
-        assertEq(_pauserOf(address(mp2)), address(0));
-    }
-
-    function test_Pause_MixedBatch_PausedAndAlreadyPaused() public {
-        MockPausable mp2 = new MockPausable();
-        mp2.setState(true); // already paused
-
-        vm.startPrank(admin);
-        cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
-        cb.setPauser(address(mp2), pauser, PAUSE_DURATION);
-        vm.stopPrank();
-
-        address[] memory list = new address[](2);
-        list[0] = address(mockPausable); // will be paused
-        list[1] = address(mp2);          // will emit AlreadyPaused
-
-        vm.expectEmit(true, false, false, false);
-        emit CircuitBreaker.Paused(address(mockPausable));
-        vm.expectEmit(true, false, false, false);
-        emit CircuitBreaker.AlreadyPaused(address(mp2));
-        vm.prank(pauser);
-        cb.pause(list);
-
-        assertTrue(mockPausable.isPaused());
-        assertEq(_pauserOf(address(mockPausable)), address(0)); // consumed
-        assertEq(_pauserOf(address(mp2)), pauser);              // not consumed
-    }
-
-    // =========================================================================
-    // pause – atomicity: if any item fails the whole tx reverts
-    // =========================================================================
-
-    function test_Pause_Batch_Atomic_RevertsOnSecondItem() public {
-        vm.startPrank(admin);
-        cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
-        cb.setPauser(address(mockPauseFails), pauser, PAUSE_DURATION);
-        vm.stopPrank();
-
-        address[] memory list = new address[](2);
-        list[0] = address(mockPausable);   // would succeed
-        list[1] = address(mockPauseFails); // triggers PauseFailed
-
-        vm.expectRevert(
-            abi.encodeWithSelector(CircuitBreaker.PauseFailed.selector, address(mockPauseFails))
-        );
-        vm.prank(pauser);
-        cb.pause(list);
-
-        // Tx reverted → first item's effects are rolled back
-        assertFalse(mockPausable.isPaused());
-        assertEq(_pauserOf(address(mockPausable)), pauser);
-    }
-
-    function test_Pause_Batch_Atomic_RevertsOnFirstItem_SenderNotPauser() public {
-        // No pauser assigned for mockPausable; second item has pauser set
-        MockPausable mp2 = new MockPausable();
-        vm.prank(admin);
-        cb.setPauser(address(mp2), pauser, PAUSE_DURATION);
-
-        address[] memory list = new address[](2);
-        list[0] = address(mockPausable); // fails immediately
-        list[1] = address(mp2);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), address(0))
-        );
-        vm.prank(pauser);
-        cb.pause(list);
-
-        // mp2 must remain untouched
-        assertFalse(mp2.isPaused());
-        assertEq(_pauserOf(address(mp2)), pauser);
-    }
-
-    // =========================================================================
-    // pause – duplicate entries in the list
-    // =========================================================================
-
-    function test_Pause_DuplicateNotPaused_RevertsNaturally() public {
-        // First iteration pauses and deletes the config.
-        // Second iteration: auth check fires before isPaused; config is gone → SenderNotPauser.
-        // The entire tx reverts, rolling back the first pause too.
-        _assignPauser(address(mockPausable), pauser);
-
-        address[] memory list = new address[](2);
-        list[0] = address(mockPausable);
-        list[1] = address(mockPausable);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), address(0))
-        );
-        vm.prank(pauser);
-        cb.pause(list);
-
-        // Entire tx reverted — first pause rolled back.
-        assertFalse(mockPausable.isPaused());
-        assertEq(_pauserOf(address(mockPausable)), pauser);
-    }
-
-    function test_Pause_DuplicatePausable_AlreadyPaused_BothEmitAlreadyPaused() public {
-        // When already paused the pauser is NOT consumed; both iterations emit AlreadyPaused.
-        mockPausable.setState(true);
-        _assignPauser(address(mockPausable), pauser);
-
-        address[] memory list = new address[](2);
-        list[0] = address(mockPausable);
-        list[1] = address(mockPausable);
-
-        vm.expectEmit(true, false, false, false);
-        emit CircuitBreaker.AlreadyPaused(address(mockPausable));
-        vm.expectEmit(true, false, false, false);
-        emit CircuitBreaker.AlreadyPaused(address(mockPausable));
-        vm.prank(pauser);
-        cb.pause(list);
-    }
-
-    // =========================================================================
-    // pause – SenderNotPauser at non-first index (loop iteration coverage)
-    // =========================================================================
-
-    function test_Pause_RevertIf_SenderNotPauser_AtSecondIndex() public {
-        MockPausable mp2 = new MockPausable();
-        _assignPauser(address(mockPausable), pauser);
-        // No pauser for mp2
-
-        address[] memory list = new address[](2);
-        list[0] = address(mockPausable);
-        list[1] = address(mp2);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mp2), address(0))
-        );
-        vm.prank(pauser);
-        cb.pause(list);
-
-        // Atomicity: first item rolled back
-        assertFalse(mockPausable.isPaused());
-        assertEq(_pauserOf(address(mockPausable)), pauser);
+        cb.pause(address(mockPauseReverts));
     }
 
     // =========================================================================
@@ -666,12 +484,386 @@ contract CircuitBreakerTest is Test {
         (p,) = cb.pauserConfigs(pausable);
     }
 
-    function _durationOf(address pausable) internal view returns (uint96 d) {
+    function _durationOf(address pausable) internal view returns (uint64 d) {
+        (, d) = cb.pauserConfigs(pausable);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Mock: reentrancy — calls pause() again from pauseFor()
+// ---------------------------------------------------------------------------
+contract MockPausableReentrant is IPausable {
+    CircuitBreaker private _cb;
+    bool private _paused;
+    bool private _reentered;
+
+    constructor(CircuitBreaker cb_) {
+        _cb = cb_;
+    }
+
+    function isPaused() external view returns (bool) {
+        return _paused;
+    }
+
+    function pauseFor(uint256) external {
+        _paused = true;
+        if (!_reentered) {
+            _reentered = true;
+            // Attempt reentrant pause — config is already deleted so auth will fail
+            _cb.pause(address(this));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Edge-case test suite
+// ---------------------------------------------------------------------------
+contract CircuitBreakerEdgeCaseTest is Test {
+    CircuitBreaker internal cb;
+    MockPausable internal mockPausable;
+
+    address internal admin = makeAddr("admin");
+    address internal pauser = makeAddr("pauser");
+    address internal stranger = makeAddr("stranger");
+
+    uint256 internal constant PAUSE_DURATION = 1 days;
+
+    function setUp() public {
+        cb = new CircuitBreaker(admin);
+        mockPausable = new MockPausable();
+    }
+
+    function _assignPauser(address pausable, address _pauser) internal {
+        vm.prank(admin);
+        cb.setPauser(pausable, _pauser, PAUSE_DURATION);
+    }
+
+    function _assignPauser(address pausable, address _pauser, uint256 duration) internal {
+        vm.prank(admin);
+        cb.setPauser(pausable, _pauser, duration);
+    }
+
+    function _pauserOf(address pausable) internal view returns (address p) {
+        (p,) = cb.pauserConfigs(pausable);
+    }
+
+    function _durationOf(address pausable) internal view returns (uint64 d) {
         (, d) = cb.pauserConfigs(pausable);
     }
 
-    function _list(address a) internal pure returns (address[] memory list) {
-        list = new address[](1);
-        list[0] = a;
+    // =========================================================================
+    // Re-arm after consumption
+    // =========================================================================
+
+    function test_Pause_RearmAfterConsumption() public {
+        _assignPauser(address(mockPausable), pauser);
+
+        vm.prank(pauser);
+        cb.pause(address(mockPausable));
+        // Config consumed
+        assertEq(_pauserOf(address(mockPausable)), address(0));
+
+        // Admin re-arms
+        mockPausable.setState(false);
+        uint256 newDuration = 7 days;
+        _assignPauser(address(mockPausable), pauser, newDuration);
+
+        // Pauser can pause again with new duration
+        vm.prank(pauser);
+        cb.pause(address(mockPausable));
+        assertTrue(mockPausable.isPaused());
+        assertEq(mockPausable.getResumeSinceTimestamp(), block.timestamp + newDuration);
+    }
+
+    // =========================================================================
+    // One pauser, multiple pausables — independence
+    // =========================================================================
+
+    function test_Pause_MultiplePausables_Independent() public {
+        MockPausable mp2 = new MockPausable();
+        _assignPauser(address(mockPausable), pauser);
+        _assignPauser(address(mp2), pauser);
+
+        // Pause first
+        vm.prank(pauser);
+        cb.pause(address(mockPausable));
+
+        // First consumed, second still armed
+        assertEq(_pauserOf(address(mockPausable)), address(0));
+        assertEq(_pauserOf(address(mp2)), pauser);
+
+        // Can still pause second
+        vm.prank(pauser);
+        cb.pause(address(mp2));
+        assertTrue(mp2.isPaused());
+    }
+
+    // =========================================================================
+    // Heartbeat fails after pause consumes config
+    // =========================================================================
+
+    function test_Heartbeat_RevertIf_ConfigConsumedByPause() public {
+        _assignPauser(address(mockPausable), pauser);
+
+        vm.prank(pauser);
+        cb.pause(address(mockPausable));
+
+        // Config deleted — heartbeat via this pausable should revert
+        vm.expectRevert(
+            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), address(0))
+        );
+        vm.prank(pauser);
+        cb.heartbeat(address(mockPausable));
+    }
+
+    // =========================================================================
+    // AlreadyPaused preserves duration
+    // =========================================================================
+
+    function test_Pause_AlreadyPaused_PreservesDuration() public {
+        mockPausable.setState(true);
+        uint256 customDuration = 3 days;
+        _assignPauser(address(mockPausable), pauser, customDuration);
+
+        vm.prank(pauser);
+        cb.pause(address(mockPausable));
+
+        // Duration must survive the no-op branch
+        assertEq(_durationOf(address(mockPausable)), uint64(customDuration));
+    }
+
+    // =========================================================================
+    // removePauser blocks subsequent pause
+    // =========================================================================
+
+    function test_Pause_RevertIf_PauserRemoved() public {
+        _assignPauser(address(mockPausable), pauser);
+
+        vm.prank(admin);
+        cb.removePauser(address(mockPausable));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), address(0))
+        );
+        vm.prank(pauser);
+        cb.pause(address(mockPausable));
+    }
+
+    // =========================================================================
+    // removePauser on never-assigned pausable (no-op)
+    // =========================================================================
+
+    function test_RemovePauser_RevertIf_NoPauserAssigned() public {
+        vm.expectRevert(CircuitBreaker.ZeroPauser.selector);
+        vm.prank(admin);
+        cb.removePauser(address(mockPausable));
+    }
+
+    // =========================================================================
+    // pause on EOA / non-contract reverts
+    // =========================================================================
+
+    function test_Pause_RevertIf_PausableIsEOA() public {
+        address eoa = makeAddr("eoa");
+        _assignPauser(eoa, pauser);
+
+        // Calling isPaused() on an EOA will revert (no code)
+        vm.prank(pauser);
+        vm.expectRevert();
+        cb.pause(eoa);
+    }
+
+    // =========================================================================
+    // Max uint64 duration boundary
+    // =========================================================================
+
+    function test_SetPauser_MaxUint64Duration() public {
+        uint256 maxDuration = uint256(type(uint64).max);
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), pauser, maxDuration);
+        assertEq(_durationOf(address(mockPausable)), uint64(maxDuration));
+    }
+
+    // =========================================================================
+    // Admin is not implicitly a pauser
+    // =========================================================================
+
+    function test_Pause_RevertIf_AdminIsNotPauser() public {
+        _assignPauser(address(mockPausable), pauser);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), pauser)
+        );
+        vm.prank(admin);
+        cb.pause(address(mockPausable));
+    }
+
+    function test_Heartbeat_RevertIf_AdminIsNotPauser() public {
+        _assignPauser(address(mockPausable), pauser);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), pauser)
+        );
+        vm.prank(admin);
+        cb.heartbeat(address(mockPausable));
+    }
+
+    // =========================================================================
+    // Re-assign same pauser with different duration
+    // =========================================================================
+
+    function test_SetPauser_SamePauserNewDuration() public {
+        _assignPauser(address(mockPausable), pauser, 1 days);
+
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), pauser, 14 days);
+
+        assertEq(_pauserOf(address(mockPausable)), pauser);
+        assertEq(_durationOf(address(mockPausable)), uint64(14 days));
+    }
+
+    // =========================================================================
+    // Cross-pausable heartbeat then pause
+    // =========================================================================
+
+    function test_Heartbeat_ViaPausableA_ThenPausePausableB() public {
+        MockPausable mp2 = new MockPausable();
+        _assignPauser(address(mockPausable), pauser);
+        _assignPauser(address(mp2), pauser);
+
+        // Heartbeat via pausable A
+        vm.prank(pauser);
+        cb.heartbeat(address(mockPausable));
+        uint256 ts1 = block.timestamp;
+        assertEq(cb.latestHeartbeats(pauser), ts1);
+
+        // Advance time, pause via pausable B
+        vm.warp(block.timestamp + 1 hours);
+        vm.prank(pauser);
+        cb.pause(address(mp2));
+
+        // Heartbeat updated to later timestamp
+        assertEq(cb.latestHeartbeats(pauser), block.timestamp);
+        assertTrue(mp2.isPaused());
+
+        // Pausable A config still intact
+        assertEq(_pauserOf(address(mockPausable)), pauser);
+    }
+
+    // =========================================================================
+    // setPauser after removePauser
+    // =========================================================================
+
+    function test_SetPauser_AfterRemovePauser() public {
+        _assignPauser(address(mockPausable), pauser);
+        vm.prank(admin);
+        cb.removePauser(address(mockPausable));
+
+        // Re-assign
+        address pauser2 = makeAddr("pauser2");
+        _assignPauser(address(mockPausable), pauser2, 3 days);
+
+        assertEq(_pauserOf(address(mockPausable)), pauser2);
+        assertEq(_durationOf(address(mockPausable)), uint64(3 days));
+
+        // New pauser can pause
+        vm.prank(pauser2);
+        cb.pause(address(mockPausable));
+        assertTrue(mockPausable.isPaused());
+    }
+
+    // =========================================================================
+    // Full lifecycle: assign → already-paused no-op → unpause → re-assign → pause
+    // =========================================================================
+
+    function test_FullLifecycle_AlreadyPaused_Unpause_Reassign_Pause() public {
+        // Already paused externally
+        mockPausable.setState(true);
+        _assignPauser(address(mockPausable), pauser);
+
+        // Pause is a no-op
+        vm.prank(pauser);
+        cb.pause(address(mockPausable));
+        assertEq(_pauserOf(address(mockPausable)), pauser); // not consumed
+
+        // Contract unpauses itself
+        mockPausable.setState(false);
+
+        // Pauser can now actually pause (config survived the no-op)
+        vm.prank(pauser);
+        cb.pause(address(mockPausable));
+        assertTrue(mockPausable.isPaused());
+
+        // Config is now consumed
+        assertEq(_pauserOf(address(mockPausable)), address(0));
+        assertEq(_durationOf(address(mockPausable)), 0);
+
+        // Re-arm by admin
+        mockPausable.setState(false);
+        _assignPauser(address(mockPausable), pauser, 2 days);
+
+        vm.prank(pauser);
+        cb.pause(address(mockPausable));
+        assertEq(mockPausable.getResumeSinceTimestamp(), block.timestamp + 2 days);
+    }
+
+    // =========================================================================
+    // Reentrancy: pauseFor tries to call pause() again
+    // =========================================================================
+
+    function test_Pause_Reentrancy_FromPauseFor() public {
+        MockPausableReentrant reentrant = new MockPausableReentrant(cb);
+        _assignPauser(address(reentrant), pauser);
+
+        // The reentrant pauseFor will try to call pause() again.
+        // Since config is deleted before the external call, the reentrant
+        // call will revert with SenderNotPauser. That revert bubbles up.
+        vm.prank(pauser);
+        vm.expectRevert(
+            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(reentrant), address(0))
+        );
+        cb.pause(address(reentrant));
+    }
+
+    // =========================================================================
+    // Heartbeat via one of multiple pausables after another is consumed
+    // =========================================================================
+
+    function test_Heartbeat_StillWorksViaOtherPausable_AfterOneConsumed() public {
+        MockPausable mp2 = new MockPausable();
+        _assignPauser(address(mockPausable), pauser);
+        _assignPauser(address(mp2), pauser);
+
+        // Consume config for mockPausable
+        vm.prank(pauser);
+        cb.pause(address(mockPausable));
+
+        // Heartbeat via mp2 still works
+        vm.warp(block.timestamp + 1 hours);
+        vm.prank(pauser);
+        cb.heartbeat(address(mp2));
+        assertEq(cb.latestHeartbeats(pauser), block.timestamp);
+    }
+
+    // =========================================================================
+    // Fuzz: setPauser duration within valid range
+    // =========================================================================
+
+    function testFuzz_SetPauser_ValidDuration(uint256 duration) public {
+        duration = bound(duration, 1, uint256(type(uint64).max));
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), pauser, duration);
+        assertEq(_durationOf(address(mockPausable)), uint64(duration));
+    }
+
+    // =========================================================================
+    // Fuzz: setPauser rejects duration above uint64 max
+    // =========================================================================
+
+    function testFuzz_SetPauser_RevertIf_DurationAboveMax(uint256 duration) public {
+        duration = bound(duration, uint256(type(uint64).max) + 1, type(uint256).max);
+        vm.expectRevert(CircuitBreaker.DurationTooLarge.selector);
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), pauser, duration);
     }
 }

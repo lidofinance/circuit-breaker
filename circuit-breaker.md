@@ -47,7 +47,7 @@ A single CircuitBreaker is deployed with minimal configuration: just the DAO Age
 
 **Pause duration.** Each pausable contract has its own pause duration, set by the DAO when assigning a pauser. The duration is cleared together with the pauser on use — after a pause, the DAO must call setPauser again with a new duration to re-arm the pausable. This allows different contracts to be paused for different lengths of time depending on their risk profile.
 
-**Pausing.** In an emergency, the pauser calls the CircuitBreaker with the list of contracts to pause. For each contract, the CircuitBreaker verifies the caller is the assigned pauser — whether or not the contract is already paused. If a contract is already paused, it is skipped without re-pausing. Otherwise, the contract is paused for the configured duration and the CircuitBreaker verifies the pause succeeded. The pauser's heartbeat is updated at the end of the call.
+**Pausing.** In an emergency, the pauser calls the CircuitBreaker with the contract to pause. The CircuitBreaker verifies the caller is the assigned pauser — whether or not the contract is already paused. If the contract is already paused, the call is a no-op. Otherwise, the contract is paused for the configured duration and the CircuitBreaker verifies the pause succeeded. The pauser's heartbeat is updated at the end of the call. Batching multiple pauses can be done externally (e.g. multisig multi-send).
 
 **Heartbeat.** The heartbeat is tied to the pauser, not to individual contracts. A single heartbeat transaction proves the pauser is alive for everything it's responsible for, regardless of how many contracts it covers. This directly addresses V2's redundant prolongation problem: instead of one prolongation per GateSeal, there is one heartbeat per pauser.
 
@@ -118,7 +118,7 @@ HEARTBEAT - pausers
 PAUSE - pauser
 │
 │  Vulnerability discovered affecting ValidatorExitBus.
-│  Pauser_A calls pause([ValidatorExitBus]).
+│  Pauser_A calls pause(ValidatorExitBus).
 │  ValidatorExitBus is paused for 14 days.
 │  Pauser_A's heartbeat is updated.
 │

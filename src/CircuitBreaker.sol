@@ -43,10 +43,10 @@ interface IPausable {
 ///         - Admin is DAO Agent or other DAO-controlled executor.
 contract CircuitBreaker {
     /// @notice Pauser and pause duration for a pausable contract.
-    ///         address (20 bytes) + uint96 (12 bytes) pack into one 32-byte storage slot.
+    ///         address (20 bytes) + uint64 (8 bytes) pack into one 32-byte storage slot.
     struct PauseConfig {
         address pauser;
-        uint96 duration;
+        uint64 duration;
     }
 
     error ZeroAdmin();
@@ -55,7 +55,6 @@ contract CircuitBreaker {
     error ZeroPauser();
     error DurationTooLarge();
     error SenderNotAdmin();
-    error EmptyList();
     error SenderNotPauser(address pausable, address pauser);
     error PauseFailed(address pausable);
 
@@ -101,9 +100,9 @@ contract CircuitBreaker {
         require(_pausable != address(0), ZeroPausable());
         require(_pauser != address(0), ZeroPauser());
         require(_pauseDuration > 0, ZeroPauseDuration());
-        require(_pauseDuration <= type(uint96).max, DurationTooLarge());
+        require(_pauseDuration <= type(uint64).max, DurationTooLarge());
 
-        pauserConfigs[_pausable] = PauseConfig(_pauser, uint96(_pauseDuration));
+        pauserConfigs[_pausable] = PauseConfig(_pauser, uint64(_pauseDuration));
 
         emit PauserSet(_pausable, _pauser, _pauseDuration);
     }
@@ -113,6 +112,7 @@ contract CircuitBreaker {
     function removePauser(address _pausable) external {
         require(msg.sender == ADMIN, SenderNotAdmin());
         require(_pausable != address(0), ZeroPausable());
+        require(pauserConfigs[_pausable].pauser != address(0), ZeroPauser());
 
         delete pauserConfigs[_pausable];
 
@@ -121,7 +121,10 @@ contract CircuitBreaker {
 
     /// @notice Record a liveness proof. Called automatically by pause(), but pausers
     ///         can also call it independently to signal they're alive.
-    /// @param  _pausable A pausable the caller is registered as pauser for.
+    ///         The pausable contract is passed as the parameter to perform auth check
+    ///         to prevent strangers from calling this function and creating noise
+    ///         for monitoring.
+    /// @param  _pausable Any pausable the caller is registered as pauser for.
     function heartbeat(address _pausable) external {
         PauseConfig memory config = pauserConfigs[_pausable];
         require(msg.sender == config.pauser, SenderNotPauser(_pausable, config.pauser));
@@ -129,45 +132,28 @@ contract CircuitBreaker {
         _heartbeat();
     }
 
-    /// @notice Pause one or more pausable contracts.
-    ///         CircuitBreaker must have the permission to pause every pausable in the list.
-    ///         Caller must be the assigned pauser for every pausable in the list, paused or not.
-    ///         A pausable already paused is skipped.
+    /// @notice Pause a pausable contract.
+    ///         CircuitBreaker must have the permission to pause the pausable.
+    ///         Caller must be the assigned pauser for the pausable.
+    ///         If the pausable is already paused, the call is a no-op (emits AlreadyPaused).
     ///         If the pause is successful, the pauser cannot pause the same contract again
     ///         without explicit re-assignment from the admin.
-    ///         Skipped contracts do not need re-assignment.
     ///         Updates the caller's heartbeat timestamp.
-    /// @dev    The call is atomic: if any pausable reverts, no pausables in the batch get paused.
-    ///         This behavior mirrors the basic EVM principle: the state changes entirely or not at all.
-    ///         The auth check runs before the isPaused check, so the caller must be registered for all
-    ///         pausables in the list. This naturally prevents unregistered callers from emitting Heartbeat.
-    ///         Duplicate not-paused entries revert naturally: the config is deleted after the first pause,
-    ///         causing the auth check to fail on the second occurrence. Duplicate already-paused entries
-    ///         emit AlreadyPaused twice but are otherwise harmless.
-    ///         The pauser mapping is deleted before calling pauseFor to prevent reentrancy.
-    ///         The post-condition (isPaused) verifies the contract is paused. If it's not paused, the call reverts.
-    ///         The transaction reverts on the first failed pause immediately without trying the rest of the contracts.
-    ///         No validation that _pausable is a contract. Calls to non-contract addresses revert.
-    /// @param  _pausables Contracts to pause.
-    function pause(address[] calldata _pausables) external {
-        require(_pausables.length > 0, EmptyList());
+    ///         Batching can be done externally (e.g. multisig multi-send)..
+    /// @param  _pausable Contract to pause.
+    function pause(address _pausable) external {
+        IPausable ipausable = IPausable(_pausable);
+        PauseConfig memory config = pauserConfigs[_pausable];
 
-        for (uint256 i = 0; i < _pausables.length; i++) {
-            address pausable = _pausables[i];
+        require(msg.sender == config.pauser, SenderNotPauser(_pausable, config.pauser));
 
-            IPausable ipausable = IPausable(pausable);
-            PauseConfig memory config = pauserConfigs[pausable];
-
-            require(msg.sender == config.pauser, SenderNotPauser(pausable, config.pauser));
-
-            if (ipausable.isPaused()) {
-                emit AlreadyPaused(pausable);
-            } else {
-                delete pauserConfigs[pausable];
-                ipausable.pauseFor(config.duration);
-                require(ipausable.isPaused(), PauseFailed(pausable));
-                emit Paused(pausable);
-            }
+        if (ipausable.isPaused()) {
+            emit AlreadyPaused(_pausable);
+        } else {
+            delete pauserConfigs[_pausable];
+            ipausable.pauseFor(config.duration);
+            require(ipausable.isPaused(), PauseFailed(_pausable));
+            emit Paused(_pausable);
         }
 
         _heartbeat();
