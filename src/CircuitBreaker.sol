@@ -24,7 +24,7 @@ interface IPausable {
 ///
 ///         Each pausable contract has one pauser but a pauser can have multiple pausables.
 ///         Each pausable has its own pause duration set by the admin when assigning a pauser.
-///         The pause duration persists across pause events and is only changed by admin.
+///         The pause duration is cleared together with the pauser on use; the admin must re-assign.
 ///
 ///         The heartbeat mechanism records pauser's liveness for offchain monitoring in order
 ///         to surface potentially unresponsive committees (e.g. due to lost keys) to make
@@ -139,7 +139,7 @@ contract CircuitBreaker {
     ///         If the pause is successful, the pauser cannot pause the same contract again
     ///         without explicit re-assignment from the admin.
     ///         Updates the caller's heartbeat timestamp.
-    ///         Batching can be done externally (e.g. multisig multi-send)..
+    ///         Batching can be done externally (e.g. multisig multi-send).
     /// @param  _pausable Contract to pause.
     function pause(address _pausable) external {
         IPausable ipausable = IPausable(_pausable);
