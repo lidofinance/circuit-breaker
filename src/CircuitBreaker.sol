@@ -70,7 +70,6 @@ contract CircuitBreaker {
     address public immutable ADMIN;
 
     /// @notice Per-pausable pauser and pause duration, packed into one storage slot.
-    ///         pauser == address(0) means no pauser is assigned.
     ///         Entry is deleted upon successful use.
     mapping(address pausable => PauseConfig) public pauserConfigs;
 
@@ -89,8 +88,6 @@ contract CircuitBreaker {
 
     /// @notice Assign or replace a pauser for a pausable contract.
     ///         Only 1 pauser per pausable, the previous pauser will be overwritten.
-    ///         The pause duration is cleared together with the pauser on use.
-    ///         Re-assigning requires providing a new duration.
     /// @param  _pausable Pausable contract to assign a pauser to.
     /// @param  _pauser Pauser address to assign to the pausable. Must be non-zero.
     /// @param  _pauseDuration Duration in seconds passed to pauseFor() on trigger. Must be non-zero.
