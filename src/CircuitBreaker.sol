@@ -77,10 +77,11 @@ contract CircuitBreaker {
     event CheckInExpirySet(uint256 checkInExpiry);
     event PauserSet(address indexed pausable, address indexed pauser, address indexed previousPauser);
     event PauserRemoved(address indexed pausable, address indexed pauser);
-    event Paused(address indexed pausable);
+    event Paused(address indexed pausable, address indexed pauser, uint256 pauseDuration);
     event CheckIn(address indexed pauser);
 
     error ZeroAdmin();
+    error AdminIsSelf();
     error ZeroPausable();
     error ZeroPauser();
     error PauseDurationOutOfRange();
@@ -182,11 +183,15 @@ contract CircuitBreaker {
     function pause(address _pausable) external {
         checkIn(_pausable);
 
-        delete pauser[_pausable];
-        IPausable(_pausable).pauseFor(pauseDuration);
-        assert(IPausable(_pausable).isPaused());
+        address _pauser = pauser[_pausable];
+        uint256 _pauseDuration = pauseDuration;
+        IPausable _iPausable = IPausable(_pausable);
 
-        emit Paused(_pausable);
+        delete pauser[_pausable];
+        _iPausable.pauseFor(_pauseDuration);
+        assert(_iPausable.isPaused());
+
+        emit Paused(_pausable, _pauser, _pauseDuration);
     }
 
     // =========================================================================
@@ -196,6 +201,7 @@ contract CircuitBreaker {
     /// @dev Validates and sets the admin address.
     function _setAdmin(address _newAdmin) internal {
         require(_newAdmin != address(0), ZeroAdmin());
+        require(_newAdmin != address(this), AdminIsSelf());
 
         admin = _newAdmin;
 
