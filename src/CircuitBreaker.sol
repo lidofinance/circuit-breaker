@@ -3,7 +3,6 @@
 pragma solidity 0.8.34;
 
 interface IPausable {
-    function isPaused() external view returns (bool);
     function pauseFor(uint256 _duration) external;
 }
 
@@ -72,8 +71,7 @@ contract CircuitBreaker {
     event PauserSet(address indexed pausable, address indexed pauser);
     event PauserRemoved(address indexed pausable);
     event Paused(address indexed pausable);
-    event AlreadyPaused(address indexed pausable);
-    event CheckIn(address indexed sender);
+    event CheckIn(address indexed pauser);
 
     error ZeroAdmin();
     error ZeroPausable();
@@ -82,7 +80,6 @@ contract CircuitBreaker {
     error CheckInExpired();
     error SenderNotAdmin();
     error SenderNotPauser(address pausable, address pauser);
-    error PauseFailed(address pausable);
 
     modifier onlyAdmin() {
         require(msg.sender == admin, SenderNotAdmin());
@@ -126,6 +123,7 @@ contract CircuitBreaker {
         require(_pauser != address(0), ZeroPauser());
 
         pauser[_pausable] = _pauser;
+        _checkIn(_pauser);
 
         emit PauserSet(_pausable, _pauser);
     }
@@ -141,45 +139,34 @@ contract CircuitBreaker {
         emit PauserRemoved(_pausable);
     }
 
-    /// @notice Record a liveness proof. Called automatically by pause(), but pausers
-    ///         must also call it independently to maintain eligibility to pause.
+    /// @notice Record a liveness proof. Called by pausers to maintain eligibility to pause.
+    ///         Also called internally by pause().
     ///         The pausable contract is passed as the parameter to perform auth check
     ///         to prevent strangers from calling this function and creating noise
     ///         for monitoring.
     /// @param  _pausable Any pausable the caller is registered as pauser for.
-    function checkIn(address _pausable) external {
+    function checkIn(address _pausable) public {
         require(msg.sender == pauser[_pausable], SenderNotPauser(_pausable, pauser[_pausable]));
+        require(block.timestamp <= latestCheckIn[msg.sender] + checkInInterval, CheckInExpired());
 
-        _checkIn();
+        _checkIn(msg.sender);
     }
 
     /// @notice Pause a pausable contract.
     ///         CircuitBreaker must have the permission to pause the pausable.
     ///         Caller must be the assigned pauser for the pausable.
     ///         Caller must have checked in within the configured check-in interval.
-    ///         If the pausable is already paused, the call is a no-op (emits AlreadyPaused).
-    ///         If the pause is successful, the pauser cannot pause the same contract again
-    ///         without explicit re-assignment from the admin.
-    ///         Updates the caller's check-in timestamp.
+    ///         The pauser cannot pause the same contract again without explicit
+    ///         re-assignment from the admin.
     ///         Batching can be done externally (e.g. multisig multi-send).
     /// @param  _pausable Contract to pause.
     function pause(address _pausable) external {
-        IPausable ipausable = IPausable(_pausable);
-        address assignedPauser = pauser[_pausable];
+        checkIn(_pausable);
 
-        require(msg.sender == assignedPauser, SenderNotPauser(_pausable, assignedPauser));
-        require(block.timestamp <= latestCheckIn[msg.sender] + checkInInterval, CheckInExpired());
+        delete pauser[_pausable];
+        IPausable(_pausable).pauseFor(pauseDuration);
 
-        if (ipausable.isPaused()) {
-            emit AlreadyPaused(_pausable);
-        } else {
-            delete pauser[_pausable];
-            ipausable.pauseFor(pauseDuration);
-            require(ipausable.isPaused(), PauseFailed(_pausable));
-            emit Paused(_pausable);
-        }
-
-        _checkIn();
+        emit Paused(_pausable);
     }
 
     /// @dev Validates and sets the admin address.
@@ -207,10 +194,10 @@ contract CircuitBreaker {
         emit CheckInIntervalSet(_checkInInterval);
     }
 
-    /// @dev Records liveness without auth check. Used internally by checkIn() and pause(),
-    ///      both of which validate the caller is a registered pauser.
-    function _checkIn() private {
-        latestCheckIn[msg.sender] = block.timestamp;
-        emit CheckIn(msg.sender);
+    /// @dev Sets the check-in timestamp for a pauser. Called by checkIn() (after auth
+    ///      and expiry validation) and by setPauser() (to initialize the clock).
+    function _checkIn(address _pauser) internal {
+        latestCheckIn[_pauser] = block.timestamp;
+        emit CheckIn(_pauser);
     }
 }
