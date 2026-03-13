@@ -46,6 +46,12 @@ contract CircuitBreaker {
     /// @notice Maximum pause duration that can be set by the admin.
     uint256 public constant MAX_PAUSE_DURATION = 30 days;
 
+    /// @notice Minimum check-in expiry that can be set by the admin.
+    uint256 public constant MIN_CHECK_IN_EXPIRY = 30 days;
+
+    /// @notice Maximum check-in expiry that can be set by the admin.
+    uint256 public constant MAX_CHECK_IN_EXPIRY = 1095 days;
+
     /// @notice Admin address that can assign pausers, set the pause duration, and set the check-in expiry.
     ///         Assumed to be DAO Agent or other DAO-controlled executor.
     address public admin;
@@ -77,7 +83,7 @@ contract CircuitBreaker {
     error ZeroPausable();
     error ZeroPauser();
     error PauseDurationOutOfRange();
-    error ZeroCheckInExpiry();
+    error CheckInExpiryOutOfRange();
     error CheckInExpired();
     error SenderNotAdmin();
     error SenderNotPauser(address pausable, address pauser);
@@ -204,7 +210,7 @@ contract CircuitBreaker {
 
     /// @dev Validates and sets the check-in expiry duration.
     function _setCheckInExpiry(uint256 _checkInExpiry) internal {
-        require(_checkInExpiry != 0, ZeroCheckInExpiry());
+        require(_checkInExpiry >= MIN_CHECK_IN_EXPIRY && _checkInExpiry <= MAX_CHECK_IN_EXPIRY, CheckInExpiryOutOfRange());
 
         checkInExpiry = _checkInExpiry;
 
