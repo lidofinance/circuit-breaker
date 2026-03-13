@@ -47,13 +47,13 @@ contract CircuitBreaker {
     /// @notice Maximum pause duration that can be set by the admin.
     uint256 public constant MAX_PAUSE_DURATION = 30 days;
 
-    /// @notice Minimum check-in expiry that can be set by the admin.
-    uint256 public constant MIN_CHECK_IN_EXPIRY = 30 days;
+    /// @notice Minimum check-in window that can be set by the admin.
+    uint256 public constant MIN_CHECK_IN_WINDOW = 30 days;
 
-    /// @notice Maximum check-in expiry that can be set by the admin.
-    uint256 public constant MAX_CHECK_IN_EXPIRY = 1095 days;
+    /// @notice Maximum check-in window that can be set by the admin.
+    uint256 public constant MAX_CHECK_IN_WINDOW = 1095 days;
 
-    /// @notice Admin address that can assign pausers, set the pause duration, and set the check-in expiry.
+    /// @notice Admin address that can assign pausers, set the pause duration, and set the check-in window.
     ///         Assumed to be DAO Agent or other DAO-controlled executor.
     address public admin;
 
@@ -61,9 +61,9 @@ contract CircuitBreaker {
     ///         Controlled by the admin.
     uint256 public pauseDuration;
 
-    /// @notice Time in seconds after which a check-in expires and the pauser loses eligibility to pause.
+    /// @notice Duration in seconds within which a pauser must check in to remain eligible to pause.
     ///         Controlled by the admin.
-    uint256 public checkInExpiry;
+    uint256 public checkInWindow;
 
     /// @notice Per-pausable pauser address. Entry is deleted upon successful use.
     mapping(address pausable => address pauser) public pauser;
@@ -74,7 +74,7 @@ contract CircuitBreaker {
 
     event AdminSet(address indexed admin);
     event PauseDurationSet(uint256 pauseDuration);
-    event CheckInExpirySet(uint256 checkInExpiry);
+    event CheckInWindowSet(uint256 checkInWindow);
     event PauserSet(address indexed pausable, address indexed pauser, address indexed previousPauser);
     event PauserRemoved(address indexed pausable, address indexed pauser);
     event Paused(address indexed pausable, address indexed pauser, uint256 pauseDuration);
@@ -85,7 +85,7 @@ contract CircuitBreaker {
     error ZeroPausable();
     error ZeroPauser();
     error PauseDurationOutOfRange();
-    error CheckInExpiryOutOfRange();
+    error CheckInWindowOutOfRange();
     error CheckInExpired();
     error SenderNotAdmin();
     error SenderNotPauser(address pausable, address pauser);
@@ -95,13 +95,13 @@ contract CircuitBreaker {
         _;
     }
 
-    /// @param _admin Address that can assign pausers, set the pause duration, and set the check-in expiry.
+    /// @param _admin Address that can assign pausers, set the pause duration, and set the check-in window.
     /// @param _pauseDuration Initial duration in seconds passed to pauseFor() on trigger. Must be within [MIN_PAUSE_DURATION, MAX_PAUSE_DURATION].
-    /// @param _checkInExpiry Initial check-in expiry in seconds.
-    constructor(address _admin, uint256 _pauseDuration, uint256 _checkInExpiry) {
+    /// @param _checkInWindow Initial check-in window in seconds.
+    constructor(address _admin, uint256 _pauseDuration, uint256 _checkInWindow) {
         _setAdmin(_admin);
         _setPauseDuration(_pauseDuration);
-        _setCheckInExpiry(_checkInExpiry);
+        _setCheckInWindow(_checkInWindow);
     }
 
     // =========================================================================
@@ -120,10 +120,10 @@ contract CircuitBreaker {
         _setPauseDuration(_pauseDuration);
     }
 
-    /// @notice Set the check-in expiry. Pausers must check in before expiry to remain eligible to pause.
-    /// @param  _checkInExpiry Duration in seconds.
-    function setCheckInExpiry(uint256 _checkInExpiry) external onlyAdmin {
-        _setCheckInExpiry(_checkInExpiry);
+    /// @notice Set the check-in window. Pausers must check in within this window to remain eligible to pause.
+    /// @param  _checkInWindow Duration in seconds.
+    function setCheckInWindow(uint256 _checkInWindow) external onlyAdmin {
+        _setCheckInWindow(_checkInWindow);
     }
 
     /// @notice Assign or replace a pauser for a pausable contract.
@@ -167,7 +167,7 @@ contract CircuitBreaker {
     /// @param  _pausable Any pausable the caller is registered as pauser for.
     function checkIn(address _pausable) public {
         require(msg.sender == pauser[_pausable], SenderNotPauser(_pausable, pauser[_pausable]));
-        require(block.timestamp <= latestCheckIn[msg.sender] + checkInExpiry, CheckInExpired());
+        require(block.timestamp <= latestCheckIn[msg.sender] + checkInWindow, CheckInExpired());
 
         _checkIn(msg.sender);
     }
@@ -217,13 +217,13 @@ contract CircuitBreaker {
         emit PauseDurationSet(_pauseDuration);
     }
 
-    /// @dev Validates and sets the check-in expiry duration.
-    function _setCheckInExpiry(uint256 _checkInExpiry) internal {
-        require(_checkInExpiry >= MIN_CHECK_IN_EXPIRY && _checkInExpiry <= MAX_CHECK_IN_EXPIRY, CheckInExpiryOutOfRange());
+    /// @dev Validates and sets the check-in window duration.
+    function _setCheckInWindow(uint256 _checkInWindow) internal {
+        require(_checkInWindow >= MIN_CHECK_IN_WINDOW && _checkInWindow <= MAX_CHECK_IN_WINDOW, CheckInWindowOutOfRange());
 
-        checkInExpiry = _checkInExpiry;
+        checkInWindow = _checkInWindow;
 
-        emit CheckInExpirySet(_checkInExpiry);
+        emit CheckInWindowSet(_checkInWindow);
     }
 
     /// @dev Sets the check-in timestamp for a pauser. Called by checkIn() (after auth
