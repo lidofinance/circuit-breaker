@@ -142,7 +142,6 @@ contract CircuitBreaker {
         require(removedPauser != address(0), ZeroPauser());
 
         delete pauser[_pausable];
-        delete latestCheckIn[removedPauser];
 
         emit PauserRemoved(_pausable);
     }
