@@ -3,6 +3,7 @@
 pragma solidity 0.8.34;
 
 interface IPausable {
+    function isPaused() external view returns (bool);
     function pauseFor(uint256 _duration) external;
 }
 
@@ -183,6 +184,7 @@ contract CircuitBreaker {
 
         delete pauser[_pausable];
         IPausable(_pausable).pauseFor(pauseDuration);
+        assert(IPausable(_pausable).isPaused());
 
         emit Paused(_pausable);
     }
