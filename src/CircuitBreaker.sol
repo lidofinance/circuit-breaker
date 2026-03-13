@@ -73,12 +73,12 @@ contract CircuitBreaker {
     mapping(address pauser => uint256 latestCheckIn) public latestCheckIn;
 
     event AdminSet(address indexed admin);
-    event PauseDurationSet(uint256 pauseDuration);
-    event CheckInWindowSet(uint256 checkInWindow);
+    event PauseDurationSet(uint256 previousPauseDuration, uint256 pauseDuration);
+    event CheckInWindowSet(uint256 previousCheckInWindow, uint256 checkInWindow);
     event PauserSet(address indexed pausable, address indexed pauser, address indexed previousPauser);
     event PauserRemoved(address indexed pausable, address indexed pauser);
     event Paused(address indexed pausable, address indexed pauser, uint256 pauseDuration);
-    event CheckIn(address indexed pauser);
+    event PauserCheckedIn(address indexed pauser);
 
     error ZeroAdmin();
     error AdminIsSelf();
@@ -128,18 +128,17 @@ contract CircuitBreaker {
 
     /// @notice Assign or replace a pauser for a pausable contract.
     ///         Only 1 pauser per pausable, the previous pauser will be overwritten.
-    ///         Initializes the pauser's check-in clock.
+    ///         The new pauser must check in themselves before they can pause.
     /// @param  _pausable Pausable contract to assign a pauser to.
     /// @param  _pauser Pauser address to assign to the pausable. Must be non-zero.
     /// @dev    Function does not check whether CircuitBreaker has the permission to pause.
     function setPauser(address _pausable, address _pauser) external onlyAdmin {
         require(_pausable != address(0), ZeroPausable());
+        require(_pauser != address(0), ZeroPauser());
 
         address previousPauser = pauser[_pausable];
         pauser[_pausable] = _pauser;
         emit PauserSet(_pausable, _pauser, previousPauser);
-        
-        _checkIn(_pauser);
     }
 
     /// @notice Remove the pauser for a pausable contract.
@@ -167,9 +166,20 @@ contract CircuitBreaker {
     /// @param  _pausable Any pausable the caller is registered as pauser for.
     function checkIn(address _pausable) public {
         require(msg.sender == pauser[_pausable], SenderNotPauser(_pausable, pauser[_pausable]));
-        require(block.timestamp <= latestCheckIn[msg.sender] + checkInWindow, CheckInExpired());
 
-        _checkIn(msg.sender);
+        uint256 _latestCheckIn = latestCheckIn[msg.sender];
+        if (_latestCheckIn != 0) {
+            require(block.timestamp <= _latestCheckIn + checkInWindow, CheckInExpired());
+        }
+
+        latestCheckIn[msg.sender] = block.timestamp;
+        emit PauserCheckedIn(msg.sender);
+    }
+
+    /// @notice Returns whether a pauser's check-in is valid (not expired).
+    /// @param  _pauser Address of the pauser to check.
+    function isCheckInValid(address _pauser) external view returns (bool) {
+        return block.timestamp <= latestCheckIn[_pauser] + checkInWindow;
     }
 
     /// @notice Pause a pausable contract.
@@ -212,26 +222,19 @@ contract CircuitBreaker {
     function _setPauseDuration(uint256 _pauseDuration) internal {
         require(_pauseDuration >= MIN_PAUSE_DURATION && _pauseDuration <= MAX_PAUSE_DURATION, PauseDurationOutOfRange());
 
+        uint256 previousPauseDuration = pauseDuration;
         pauseDuration = _pauseDuration;
 
-        emit PauseDurationSet(_pauseDuration);
+        emit PauseDurationSet(previousPauseDuration, _pauseDuration);
     }
 
     /// @dev Validates and sets the check-in window duration.
     function _setCheckInWindow(uint256 _checkInWindow) internal {
         require(_checkInWindow >= MIN_CHECK_IN_WINDOW && _checkInWindow <= MAX_CHECK_IN_WINDOW, CheckInWindowOutOfRange());
 
+        uint256 previousCheckInWindow = checkInWindow;
         checkInWindow = _checkInWindow;
 
-        emit CheckInWindowSet(_checkInWindow);
-    }
-
-    /// @dev Sets the check-in timestamp for a pauser. Called by checkIn() (after auth
-    ///      and expiry validation) and by setPauser() (to initialize the clock).
-    function _checkIn(address _pauser) internal {
-        require(_pauser != address(0), ZeroPauser());
-
-        latestCheckIn[_pauser] = block.timestamp;
-        emit CheckIn(_pauser);
+        emit CheckInWindowSet(previousCheckInWindow, _checkInWindow);
     }
 }
