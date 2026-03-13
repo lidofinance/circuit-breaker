@@ -49,7 +49,7 @@ contract CircuitBreaker {
 
     /// @notice Admin address that can assign pausers and set the global pause duration.
     ///         Assumed to be DAO Agent or other DAO-controlled executor.
-    address public immutable ADMIN;
+    address public admin;
 
     /// @notice Duration in seconds passed to pauseFor() on trigger. Applies to all pausables.
     ///         Controlled by the admin.
@@ -79,18 +79,21 @@ contract CircuitBreaker {
     error PauseFailed(address pausable);
 
     modifier onlyAdmin() {
-        require(msg.sender == ADMIN, SenderNotAdmin());
+        require(msg.sender == admin, SenderNotAdmin());
         _;
     }
 
     /// @param _admin Address that can assign pausers and control the global pause duration.
     /// @param _pauseDuration Initial duration in seconds passed to pauseFor() on trigger. Must be within [MIN_PAUSE_DURATION, MAX_PAUSE_DURATION].
     constructor(address _admin, uint256 _pauseDuration) {
-        require(_admin != address(0), ZeroAdmin());
-        ADMIN = _admin;
-        emit AdminSet(_admin);
-        
+        _setAdmin(_admin);
         _setPauseDuration(_pauseDuration);
+    }
+
+    /// @notice Transfer admin role to a new address.
+    /// @param  _newAdmin New admin address. Must be non-zero.
+    function setAdmin(address _newAdmin) external onlyAdmin {
+        _setAdmin(_newAdmin);
     }
 
     /// @notice Set the global pause duration applied to all pausables on trigger.
@@ -161,6 +164,15 @@ contract CircuitBreaker {
         }
 
         _heartbeat();
+    }
+
+    /// @dev Validates and sets the admin address.
+    function _setAdmin(address _newAdmin) internal {
+        require(_newAdmin != address(0), ZeroAdmin());
+
+        admin = _newAdmin;
+
+        emit AdminSet(_newAdmin);
     }
 
     /// @dev Validates and sets the global pause duration.
