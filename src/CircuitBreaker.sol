@@ -74,8 +74,8 @@ contract CircuitBreaker {
     event AdminSet(address indexed admin);
     event PauseDurationSet(uint256 pauseDuration);
     event CheckInExpirySet(uint256 checkInExpiry);
-    event PauserSet(address indexed pausable, address indexed pauser);
-    event PauserRemoved(address indexed pausable);
+    event PauserSet(address indexed pausable, address indexed pauser, address indexed previousPauser);
+    event PauserRemoved(address indexed pausable, address indexed pauser);
     event Paused(address indexed pausable);
     event CheckIn(address indexed pauser);
 
@@ -133,8 +133,9 @@ contract CircuitBreaker {
     function setPauser(address _pausable, address _pauser) external onlyAdmin {
         require(_pausable != address(0), ZeroPausable());
 
+        address previousPauser = pauser[_pausable];
         pauser[_pausable] = _pauser;
-        emit PauserSet(_pausable, _pauser);
+        emit PauserSet(_pausable, _pauser, previousPauser);
         
         _checkIn(_pauser);
     }
@@ -149,7 +150,7 @@ contract CircuitBreaker {
 
         delete pauser[_pausable];
 
-        emit PauserRemoved(_pausable);
+        emit PauserRemoved(_pausable, removedPauser);
     }
 
     // =========================================================================
