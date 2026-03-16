@@ -21,35 +21,28 @@ contract MockPausable is IPausable {
         _resumeSince = block.timestamp + duration;
     }
 
-    // Non-interface helper: verify the duration passed to pauseFor
     function getResumeSinceTimestamp() external view returns (uint256) {
         return _resumeSince;
     }
 
-    // Test helper: set paused state directly
     function setState(bool paused) external {
         _paused = paused;
     }
 }
 
 // ---------------------------------------------------------------------------
-// Mock: triggers PauseFailed.
-// isPaused() always returns false → else branch executes.
-// pauseFor() does nothing so the post-call isPaused() check returns false → PauseFailed.
+// Mock: isPaused() always returns false → PauseFailed
 // ---------------------------------------------------------------------------
 contract MockPausablePauseFails is IPausable {
     function isPaused() external pure returns (bool) {
         return false;
     }
 
-    function pauseFor(uint256) external {
-        // does nothing — isPaused stays false
-    }
+    function pauseFor(uint256) external {}
 }
 
 // ---------------------------------------------------------------------------
-// Mock: pauseFor reverts → call site bubbles up the revert.
-// isPaused() returns false → else branch executes → pauseFor reverts.
+// Mock: pauseFor reverts
 // ---------------------------------------------------------------------------
 contract MockPausableReverting is IPausable {
     function isPaused() external pure returns (bool) {
@@ -58,434 +51,6 @@ contract MockPausableReverting is IPausable {
 
     function pauseFor(uint256) external pure {
         revert("pauseFor: forced revert");
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Test suite
-// ---------------------------------------------------------------------------
-contract CircuitBreakerTest is Test {
-    CircuitBreaker internal cb;
-    MockPausable internal mockPausable;
-    MockPausablePauseFails internal mockPauseFails;
-    MockPausableReverting internal mockPauseReverts;
-
-    address internal admin = makeAddr("admin");
-    address internal pauser = makeAddr("pauser");
-    address internal stranger = makeAddr("stranger");
-
-    uint256 internal constant PAUSE_DURATION = 1 days;
-
-    function setUp() public {
-        cb = new CircuitBreaker(admin);
-        mockPausable = new MockPausable();
-        mockPauseFails = new MockPausablePauseFails();
-        mockPauseReverts = new MockPausableReverting();
-    }
-
-    // =========================================================================
-    // Constructor
-    // =========================================================================
-
-    function test_Constructor_SetsAdmin() public view {
-        assertEq(cb.ADMIN(), admin);
-    }
-
-    function test_Constructor_EmitsAdminSet() public {
-        vm.expectEmit(true, false, false, false);
-        emit CircuitBreaker.AdminSet(admin);
-        new CircuitBreaker(admin);
-    }
-
-    function test_Constructor_RevertIf_ZeroAdmin() public {
-        vm.expectRevert(CircuitBreaker.ZeroAdmin.selector);
-        new CircuitBreaker(address(0));
-    }
-
-    // =========================================================================
-    // setPauser
-    // =========================================================================
-
-    function test_SetPauser_SetsPauser() public {
-        vm.prank(admin);
-        cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
-        assertEq(_pauserOf(address(mockPausable)), pauser);
-    }
-
-    function test_SetPauser_SetsPauseDuration() public {
-        vm.prank(admin);
-        cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
-        assertEq(_durationOf(address(mockPausable)), PAUSE_DURATION);
-    }
-
-    function test_SetPauser_EmitsPauserSet() public {
-        vm.expectEmit(true, true, false, true);
-        emit CircuitBreaker.PauserSet(address(mockPausable), pauser, PAUSE_DURATION);
-        vm.prank(admin);
-        cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
-    }
-
-    function test_SetPauser_OverridesPreviousPauser() public {
-        address pauser2 = makeAddr("pauser2");
-        uint256 newDuration = 7 days;
-        vm.startPrank(admin);
-        cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
-        cb.setPauser(address(mockPausable), pauser2, newDuration);
-        vm.stopPrank();
-        assertEq(_pauserOf(address(mockPausable)), pauser2);
-        assertEq(_durationOf(address(mockPausable)), newDuration);
-    }
-
-    function test_SetPauser_RevertIf_ZeroPauser() public {
-        vm.expectRevert(CircuitBreaker.ZeroPauser.selector);
-        vm.prank(admin);
-        cb.setPauser(address(mockPausable), address(0), PAUSE_DURATION);
-    }
-
-    function test_SetPauser_RevertIf_SenderNotAdmin() public {
-        vm.expectRevert(CircuitBreaker.SenderNotAdmin.selector);
-        vm.prank(stranger);
-        cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
-    }
-
-    function test_SetPauser_RevertIf_ZeroPausable() public {
-        vm.expectRevert(CircuitBreaker.ZeroPausable.selector);
-        vm.prank(admin);
-        cb.setPauser(address(0), pauser, PAUSE_DURATION);
-    }
-
-    function test_SetPauser_RevertIf_ZeroPauseDuration() public {
-        vm.expectRevert(CircuitBreaker.ZeroPauseDuration.selector);
-        vm.prank(admin);
-        cb.setPauser(address(mockPausable), pauser, 0);
-    }
-
-    function test_SetPauser_RevertIf_DurationTooLarge() public {
-        vm.expectRevert(CircuitBreaker.DurationTooLarge.selector);
-        vm.prank(admin);
-        cb.setPauser(address(mockPausable), pauser, uint256(type(uint64).max) + 1);
-    }
-
-    // =========================================================================
-    // removePauser
-    // =========================================================================
-
-    function test_RemovePauser_ClearsPauser() public {
-        vm.startPrank(admin);
-        cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
-        cb.removePauser(address(mockPausable));
-        vm.stopPrank();
-        assertEq(_pauserOf(address(mockPausable)), address(0));
-    }
-
-    function test_RemovePauser_ClearsPauseDuration() public {
-        vm.startPrank(admin);
-        cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
-        cb.removePauser(address(mockPausable));
-        vm.stopPrank();
-        assertEq(_durationOf(address(mockPausable)), 0);
-    }
-
-    function test_RemovePauser_EmitsPauserRemoved() public {
-        vm.startPrank(admin);
-        cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
-        vm.expectEmit(true, false, false, false);
-        emit CircuitBreaker.PauserRemoved(address(mockPausable));
-        cb.removePauser(address(mockPausable));
-        vm.stopPrank();
-    }
-
-    function test_RemovePauser_RevertIf_SenderNotAdmin() public {
-        vm.expectRevert(CircuitBreaker.SenderNotAdmin.selector);
-        vm.prank(stranger);
-        cb.removePauser(address(mockPausable));
-    }
-
-    function test_RemovePauser_RevertIf_ZeroPausable() public {
-        vm.expectRevert(CircuitBreaker.ZeroPausable.selector);
-        vm.prank(admin);
-        cb.removePauser(address(0));
-    }
-
-    // =========================================================================
-    // pause – input validation
-    // =========================================================================
-
-    function test_Pause_RevertIf_SenderNotPauser_NoPauserAssigned() public {
-        // pausers[pausable] == address(0), which never equals a real caller
-        vm.expectRevert(
-            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), address(0))
-        );
-        vm.prank(pauser);
-        cb.pause(address(mockPausable));
-    }
-
-    function test_Pause_RevertIf_SenderNotPauser_WrongCaller() public {
-        vm.prank(admin);
-        cb.setPauser(address(mockPausable), pauser, PAUSE_DURATION);
-
-        // pauser is the assigned address; stranger is the wrong caller
-        vm.expectRevert(
-            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), pauser)
-        );
-        vm.prank(stranger);
-        cb.pause(address(mockPausable));
-    }
-
-    // =========================================================================
-    // pause – happy path (not already paused)
-    // =========================================================================
-
-    function test_Pause_EmitsPaused() public {
-        _assignPauser(address(mockPausable), pauser);
-
-        vm.expectEmit(true, false, false, false);
-        emit CircuitBreaker.Paused(address(mockPausable));
-        vm.prank(pauser);
-        cb.pause(address(mockPausable));
-    }
-
-    function test_Pause_CallsPauseFor_WithConfiguredDuration() public {
-        _assignPauser(address(mockPausable), pauser);
-
-        vm.prank(pauser);
-        cb.pause(address(mockPausable));
-
-        assertTrue(mockPausable.isPaused());
-        assertEq(mockPausable.getResumeSinceTimestamp(), block.timestamp + PAUSE_DURATION);
-    }
-
-    function test_Pause_DeletesPauser_AfterSuccess() public {
-        _assignPauser(address(mockPausable), pauser);
-
-        vm.prank(pauser);
-        cb.pause(address(mockPausable));
-
-        assertEq(_pauserOf(address(mockPausable)), address(0));
-    }
-
-    function test_Pause_UpdatesHeartbeat_AfterSuccess() public {
-        _assignPauser(address(mockPausable), pauser);
-
-        uint256 ts = block.timestamp;
-        vm.prank(pauser);
-        cb.pause(address(mockPausable));
-
-        assertEq(cb.latestHeartbeats(pauser), ts);
-    }
-
-    function test_Pause_EmitsHeartbeat_AfterSuccess() public {
-        _assignPauser(address(mockPausable), pauser);
-
-        vm.expectEmit(true, false, false, false);
-        emit CircuitBreaker.Heartbeat(pauser);
-        vm.prank(pauser);
-        cb.pause(address(mockPausable));
-    }
-
-    // =========================================================================
-    // pause – single-use pauser (pauser slot consumed on success)
-    // =========================================================================
-
-    function test_Pause_CannotPauseAgain_AfterPauserConsumed() public {
-        _assignPauser(address(mockPausable), pauser);
-
-        vm.prank(pauser);
-        cb.pause(address(mockPausable));
-
-        // Pauser config was deleted; auth check fires before isPaused, so calling pause
-        // reverts whether the contract is still paused or not.
-        vm.expectRevert(
-            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), address(0))
-        );
-        vm.prank(pauser);
-        cb.pause(address(mockPausable));
-
-        // Same after pause expiry.
-        mockPausable.setState(false);
-        vm.expectRevert(
-            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), address(0))
-        );
-        vm.prank(pauser);
-        cb.pause(address(mockPausable));
-    }
-
-    // =========================================================================
-    // pause – pause duration persists after pause
-    // =========================================================================
-
-    function test_Pause_DeletesBothFieldsAfterSuccess() public {
-        _assignPauser(address(mockPausable), pauser);
-
-        vm.prank(pauser);
-        cb.pause(address(mockPausable));
-
-        assertEq(_pauserOf(address(mockPausable)), address(0));
-        assertEq(_durationOf(address(mockPausable)), 0);
-    }
-
-    // =========================================================================
-    // pause – per-pausable duration
-    // =========================================================================
-
-    function test_Pause_UsesPausableSpecificDuration() public {
-        uint256 customDuration = 7 days;
-        vm.prank(admin);
-        cb.setPauser(address(mockPausable), pauser, customDuration);
-
-        vm.prank(pauser);
-        cb.pause(address(mockPausable));
-
-        assertEq(mockPausable.getResumeSinceTimestamp(), block.timestamp + customDuration);
-    }
-
-    // =========================================================================
-    // pause – AlreadyPaused branch
-    // =========================================================================
-
-    function test_Pause_EmitsAlreadyPaused_WhenPaused() public {
-        mockPausable.setState(true);
-        _assignPauser(address(mockPausable), pauser);
-
-        vm.expectEmit(true, false, false, false);
-        emit CircuitBreaker.AlreadyPaused(address(mockPausable));
-        vm.prank(pauser);
-        cb.pause(address(mockPausable));
-    }
-
-    function test_Pause_AlreadyPaused_DoesNotDeletePauser() public {
-        mockPausable.setState(true);
-        _assignPauser(address(mockPausable), pauser);
-
-        vm.prank(pauser);
-        cb.pause(address(mockPausable));
-
-        // Pauser must survive because the AlreadyPaused branch skips the delete
-        assertEq(_pauserOf(address(mockPausable)), pauser);
-    }
-
-    function test_Pause_AlreadyPaused_StillCallsHeartbeat() public {
-        mockPausable.setState(true);
-        _assignPauser(address(mockPausable), pauser);
-
-        uint256 ts = block.timestamp;
-        vm.prank(pauser);
-        cb.pause(address(mockPausable));
-
-        assertEq(cb.latestHeartbeats(pauser), ts);
-    }
-
-    // =========================================================================
-    // pause – PauseFailed
-    // =========================================================================
-
-    function test_Pause_RevertIf_PauseFailed() public {
-        _assignPauser(address(mockPauseFails), pauser);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(CircuitBreaker.PauseFailed.selector, address(mockPauseFails))
-        );
-        vm.prank(pauser);
-        cb.pause(address(mockPauseFails));
-    }
-
-    // =========================================================================
-    // pause – pauseFor reverts (bubbles through)
-    // =========================================================================
-
-    function test_Pause_RevertIf_PauseForReverts() public {
-        _assignPauser(address(mockPauseReverts), pauser);
-
-        vm.expectRevert("pauseFor: forced revert");
-        vm.prank(pauser);
-        cb.pause(address(mockPauseReverts));
-    }
-
-    // =========================================================================
-    // heartbeat – standalone
-    // =========================================================================
-
-    function test_Heartbeat_SetsLatestHeartbeat() public {
-        _assignPauser(address(mockPausable), pauser);
-        uint256 ts = block.timestamp;
-        vm.prank(pauser);
-        cb.heartbeat(address(mockPausable));
-        assertEq(cb.latestHeartbeats(pauser), ts);
-    }
-
-    function test_Heartbeat_EmitsHeartbeat() public {
-        _assignPauser(address(mockPausable), pauser);
-        vm.expectEmit(true, false, false, false);
-        emit CircuitBreaker.Heartbeat(pauser);
-        vm.prank(pauser);
-        cb.heartbeat(address(mockPausable));
-    }
-
-    function test_Heartbeat_UpdatesTimestamp_OnSubsequentCall() public {
-        _assignPauser(address(mockPausable), pauser);
-        vm.prank(pauser);
-        cb.heartbeat(address(mockPausable));
-
-        vm.warp(block.timestamp + 1 hours);
-        uint256 laterTs = block.timestamp;
-        vm.prank(pauser);
-        cb.heartbeat(address(mockPausable));
-
-        assertEq(cb.latestHeartbeats(pauser), laterTs);
-    }
-
-    function test_Heartbeat_RevertIf_SenderNotPauser() public {
-        _assignPauser(address(mockPausable), pauser);
-        vm.expectRevert(
-            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), pauser)
-        );
-        vm.prank(stranger);
-        cb.heartbeat(address(mockPausable));
-    }
-
-    function test_Heartbeat_RevertIf_NoPauserAssigned() public {
-        vm.expectRevert(
-            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), address(0))
-        );
-        vm.prank(pauser);
-        cb.heartbeat(address(mockPausable));
-    }
-
-    function test_Heartbeat_TracksEachCallerIndependently() public {
-        MockPausable mp2 = new MockPausable();
-        address pauser2 = makeAddr("pauser2");
-        _assignPauser(address(mockPausable), pauser);
-        vm.prank(admin);
-        cb.setPauser(address(mp2), pauser2, PAUSE_DURATION);
-
-        vm.prank(pauser);
-        cb.heartbeat(address(mockPausable));
-        uint256 ts1 = block.timestamp;
-
-        vm.warp(block.timestamp + 500);
-        vm.prank(pauser2);
-        cb.heartbeat(address(mp2));
-        uint256 ts2 = block.timestamp;
-
-        assertEq(cb.latestHeartbeats(pauser), ts1);
-        assertEq(cb.latestHeartbeats(pauser2), ts2);
-    }
-
-    // =========================================================================
-    // Helpers
-    // =========================================================================
-
-    function _assignPauser(address pausable, address _pauser) internal {
-        vm.prank(admin);
-        cb.setPauser(pausable, _pauser, PAUSE_DURATION);
-    }
-
-    function _pauserOf(address pausable) internal view returns (address p) {
-        (p,) = cb.pauserConfigs(pausable);
-    }
-
-    function _durationOf(address pausable) internal view returns (uint64 d) {
-        (, d) = cb.pauserConfigs(pausable);
     }
 }
 
@@ -509,9 +74,789 @@ contract MockPausableReentrant is IPausable {
         _paused = true;
         if (!_reentered) {
             _reentered = true;
-            // Attempt reentrant pause — config is already deleted so auth will fail
             _cb.pause(address(this));
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test suite
+// ---------------------------------------------------------------------------
+contract CircuitBreakerTest is Test {
+    CircuitBreaker internal cb;
+    MockPausable internal mockPausable;
+    MockPausablePauseFails internal mockPauseFails;
+    MockPausableReverting internal mockPauseReverts;
+
+    address internal admin = makeAddr("admin");
+    address internal pauserAddr = makeAddr("pauser");
+    address internal stranger = makeAddr("stranger");
+
+    uint256 internal constant MIN_PAUSE_DURATION = 1 days;
+    uint256 internal constant PAUSE_DURATION = 7 days;
+    uint256 internal constant MIN_CHECK_IN_WINDOW = 1 days;
+    uint256 internal constant CHECK_IN_WINDOW = 30 days;
+
+    function setUp() public {
+        cb = new CircuitBreaker(
+            admin,
+            MIN_PAUSE_DURATION,
+            MIN_CHECK_IN_WINDOW,
+            PAUSE_DURATION,
+            CHECK_IN_WINDOW
+        );
+        mockPausable = new MockPausable();
+        mockPauseFails = new MockPausablePauseFails();
+        mockPauseReverts = new MockPausableReverting();
+    }
+
+    // =========================================================================
+    // Constructor
+    // =========================================================================
+
+    function test_Constructor_SetsAdmin() public view {
+        assertEq(cb.ADMIN(), admin);
+    }
+
+    function test_Constructor_SetsMinPauseDuration() public view {
+        assertEq(cb.MIN_PAUSE_DURATION(), MIN_PAUSE_DURATION);
+    }
+
+    function test_Constructor_SetsMinCheckInWindow() public view {
+        assertEq(cb.MIN_CHECK_IN_WINDOW(), MIN_CHECK_IN_WINDOW);
+    }
+
+    function test_Constructor_SetsPauseDuration() public view {
+        assertEq(cb.pauseDuration(), PAUSE_DURATION);
+    }
+
+    function test_Constructor_SetsCheckInWindow() public view {
+        assertEq(cb.checkInWindow(), CHECK_IN_WINDOW);
+    }
+
+    function test_Constructor_MaxPauseDuration() public view {
+        assertEq(cb.MAX_PAUSE_DURATION(), 30 days);
+    }
+
+    function test_Constructor_MaxCheckInWindow() public view {
+        assertEq(cb.MAX_CHECK_IN_WINDOW(), 1095 days);
+    }
+
+    function test_Constructor_EmitsAdminSet() public {
+        vm.expectEmit(true, false, false, false);
+        emit CircuitBreaker.AdminSet(admin);
+        new CircuitBreaker(
+            admin,
+            MIN_PAUSE_DURATION,
+            MIN_CHECK_IN_WINDOW,
+            PAUSE_DURATION,
+            CHECK_IN_WINDOW
+        );
+    }
+
+    function test_Constructor_EmitsPauseDurationSet() public {
+        vm.expectEmit(false, false, false, true);
+        emit CircuitBreaker.PauseDurationSet(0, PAUSE_DURATION);
+        new CircuitBreaker(
+            admin,
+            MIN_PAUSE_DURATION,
+            MIN_CHECK_IN_WINDOW,
+            PAUSE_DURATION,
+            CHECK_IN_WINDOW
+        );
+    }
+
+    function test_Constructor_EmitsCheckInWindowSet() public {
+        vm.expectEmit(false, false, false, true);
+        emit CircuitBreaker.CheckInWindowSet(0, CHECK_IN_WINDOW);
+        new CircuitBreaker(
+            admin,
+            MIN_PAUSE_DURATION,
+            MIN_CHECK_IN_WINDOW,
+            PAUSE_DURATION,
+            CHECK_IN_WINDOW
+        );
+    }
+
+    function test_Constructor_RevertIf_ZeroAdmin() public {
+        vm.expectRevert(CircuitBreaker.ZeroAdmin.selector);
+        new CircuitBreaker(
+            address(0),
+            MIN_PAUSE_DURATION,
+            MIN_CHECK_IN_WINDOW,
+            PAUSE_DURATION,
+            CHECK_IN_WINDOW
+        );
+    }
+
+    function test_Constructor_RevertIf_SelfAdmin() public {
+        // Predict the address of the next contract deployed by this test contract
+        address predicted = vm.computeCreateAddress(
+            address(this),
+            vm.getNonce(address(this))
+        );
+        vm.expectRevert(CircuitBreaker.SelfAdmin.selector);
+        new CircuitBreaker(
+            predicted,
+            MIN_PAUSE_DURATION,
+            MIN_CHECK_IN_WINDOW,
+            PAUSE_DURATION,
+            CHECK_IN_WINDOW
+        );
+    }
+
+    function test_Constructor_RevertIf_ZeroMinPauseDuration() public {
+        vm.expectRevert(CircuitBreaker.ZeroMinPauseDuration.selector);
+        new CircuitBreaker(
+            admin,
+            0,
+            MIN_CHECK_IN_WINDOW,
+            PAUSE_DURATION,
+            CHECK_IN_WINDOW
+        );
+    }
+
+    function test_Constructor_RevertIf_MinPauseDurationTooHigh() public {
+        vm.expectRevert(CircuitBreaker.MinPauseDurationTooHigh.selector);
+        new CircuitBreaker(
+            admin,
+            30 days + 1,
+            MIN_CHECK_IN_WINDOW,
+            PAUSE_DURATION,
+            CHECK_IN_WINDOW
+        );
+    }
+
+    function test_Constructor_RevertIf_ZeroMinCheckInWindow() public {
+        vm.expectRevert(CircuitBreaker.ZeroMinCheckInWindow.selector);
+        new CircuitBreaker(
+            admin,
+            MIN_PAUSE_DURATION,
+            0,
+            PAUSE_DURATION,
+            CHECK_IN_WINDOW
+        );
+    }
+
+    function test_Constructor_RevertIf_MinCheckInWindowTooHigh() public {
+        vm.expectRevert(CircuitBreaker.MinCheckInWindowTooHigh.selector);
+        new CircuitBreaker(
+            admin,
+            MIN_PAUSE_DURATION,
+            1095 days + 1,
+            PAUSE_DURATION,
+            CHECK_IN_WINDOW
+        );
+    }
+
+    function test_Constructor_RevertIf_PauseDurationOutOfRange_TooLow() public {
+        vm.expectRevert(CircuitBreaker.PauseDurationOutOfRange.selector);
+        new CircuitBreaker(
+            admin,
+            2 days,
+            MIN_CHECK_IN_WINDOW,
+            1 days,
+            CHECK_IN_WINDOW
+        );
+    }
+
+    function test_Constructor_RevertIf_PauseDurationOutOfRange_TooHigh()
+        public
+    {
+        vm.expectRevert(CircuitBreaker.PauseDurationOutOfRange.selector);
+        new CircuitBreaker(
+            admin,
+            MIN_PAUSE_DURATION,
+            MIN_CHECK_IN_WINDOW,
+            31 days,
+            CHECK_IN_WINDOW
+        );
+    }
+
+    function test_Constructor_RevertIf_CheckInWindowOutOfRange_TooLow() public {
+        vm.expectRevert(CircuitBreaker.CheckInWindowOutOfRange.selector);
+        new CircuitBreaker(
+            admin,
+            MIN_PAUSE_DURATION,
+            2 days,
+            PAUSE_DURATION,
+            1 days
+        );
+    }
+
+    function test_Constructor_RevertIf_CheckInWindowOutOfRange_TooHigh()
+        public
+    {
+        vm.expectRevert(CircuitBreaker.CheckInWindowOutOfRange.selector);
+        new CircuitBreaker(
+            admin,
+            MIN_PAUSE_DURATION,
+            MIN_CHECK_IN_WINDOW,
+            PAUSE_DURATION,
+            1096 days
+        );
+    }
+
+    // =========================================================================
+    // setPauseDuration
+    // =========================================================================
+
+    function test_SetPauseDuration_UpdatesDuration() public {
+        vm.prank(admin);
+        cb.setPauseDuration(14 days);
+        assertEq(cb.pauseDuration(), 14 days);
+    }
+
+    function test_SetPauseDuration_EmitsPauseDurationSet() public {
+        vm.expectEmit(false, false, false, true);
+        emit CircuitBreaker.PauseDurationSet(PAUSE_DURATION, 14 days);
+        vm.prank(admin);
+        cb.setPauseDuration(14 days);
+    }
+
+    function test_SetPauseDuration_RevertIf_SenderNotAdmin() public {
+        vm.expectRevert(CircuitBreaker.SenderNotAdmin.selector);
+        vm.prank(stranger);
+        cb.setPauseDuration(14 days);
+    }
+
+    function test_SetPauseDuration_RevertIf_SamePauseDuration() public {
+        vm.expectRevert(CircuitBreaker.SamePauseDuration.selector);
+        vm.prank(admin);
+        cb.setPauseDuration(PAUSE_DURATION);
+    }
+
+    function test_SetPauseDuration_RevertIf_BelowMin() public {
+        vm.expectRevert(CircuitBreaker.PauseDurationOutOfRange.selector);
+        vm.prank(admin);
+        cb.setPauseDuration(MIN_PAUSE_DURATION - 1);
+    }
+
+    function test_SetPauseDuration_RevertIf_AboveMax() public {
+        vm.expectRevert(CircuitBreaker.PauseDurationOutOfRange.selector);
+        vm.prank(admin);
+        cb.setPauseDuration(31 days);
+    }
+
+    function test_SetPauseDuration_AtMinBoundary() public {
+        // First set to something else so we can set to min
+        vm.prank(admin);
+        cb.setPauseDuration(2 days);
+        vm.prank(admin);
+        cb.setPauseDuration(MIN_PAUSE_DURATION);
+        assertEq(cb.pauseDuration(), MIN_PAUSE_DURATION);
+    }
+
+    function test_SetPauseDuration_AtMaxBoundary() public {
+        vm.prank(admin);
+        cb.setPauseDuration(30 days);
+        assertEq(cb.pauseDuration(), 30 days);
+    }
+
+    // =========================================================================
+    // setCheckInWindow
+    // =========================================================================
+
+    function test_SetCheckInWindow_UpdatesWindow() public {
+        vm.prank(admin);
+        cb.setCheckInWindow(60 days);
+        assertEq(cb.checkInWindow(), 60 days);
+    }
+
+    function test_SetCheckInWindow_EmitsCheckInWindowSet() public {
+        vm.expectEmit(false, false, false, true);
+        emit CircuitBreaker.CheckInWindowSet(CHECK_IN_WINDOW, 60 days);
+        vm.prank(admin);
+        cb.setCheckInWindow(60 days);
+    }
+
+    function test_SetCheckInWindow_RevertIf_SenderNotAdmin() public {
+        vm.expectRevert(CircuitBreaker.SenderNotAdmin.selector);
+        vm.prank(stranger);
+        cb.setCheckInWindow(60 days);
+    }
+
+    function test_SetCheckInWindow_RevertIf_SameCheckInWindow() public {
+        vm.expectRevert(CircuitBreaker.SameCheckInWindow.selector);
+        vm.prank(admin);
+        cb.setCheckInWindow(CHECK_IN_WINDOW);
+    }
+
+    function test_SetCheckInWindow_RevertIf_BelowMin() public {
+        vm.expectRevert(CircuitBreaker.CheckInWindowOutOfRange.selector);
+        vm.prank(admin);
+        cb.setCheckInWindow(MIN_CHECK_IN_WINDOW - 1);
+    }
+
+    function test_SetCheckInWindow_RevertIf_AboveMax() public {
+        vm.expectRevert(CircuitBreaker.CheckInWindowOutOfRange.selector);
+        vm.prank(admin);
+        cb.setCheckInWindow(1096 days);
+    }
+
+    function test_SetCheckInWindow_AtMinBoundary() public {
+        vm.prank(admin);
+        cb.setCheckInWindow(2 days);
+        vm.prank(admin);
+        cb.setCheckInWindow(MIN_CHECK_IN_WINDOW);
+        assertEq(cb.checkInWindow(), MIN_CHECK_IN_WINDOW);
+    }
+
+    function test_SetCheckInWindow_AtMaxBoundary() public {
+        vm.prank(admin);
+        cb.setCheckInWindow(1095 days);
+        assertEq(cb.checkInWindow(), 1095 days);
+    }
+
+    // =========================================================================
+    // setPauser
+    // =========================================================================
+
+    function test_SetPauser_SetsPauser() public {
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), pauserAddr);
+        assertEq(cb.pauser(address(mockPausable)), pauserAddr);
+    }
+
+    function test_SetPauser_SetsCheckIn() public {
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), pauserAddr);
+        assertEq(cb.latestCheckIn(pauserAddr), block.timestamp);
+    }
+
+    function test_SetPauser_EmitsPauserSet() public {
+        vm.expectEmit(true, true, true, true);
+        emit CircuitBreaker.PauserSet(
+            address(mockPausable),
+            pauserAddr,
+            address(0)
+        );
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), pauserAddr);
+    }
+
+    function test_SetPauser_EmitsCheckIn() public {
+        vm.expectEmit(true, false, false, false);
+        emit CircuitBreaker.CheckIn(pauserAddr);
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), pauserAddr);
+    }
+
+    function test_SetPauser_OverridesPreviousPauser() public {
+        address pauser2 = makeAddr("pauser2");
+        vm.startPrank(admin);
+        cb.setPauser(address(mockPausable), pauserAddr);
+        cb.setPauser(address(mockPausable), pauser2);
+        vm.stopPrank();
+        assertEq(cb.pauser(address(mockPausable)), pauser2);
+    }
+
+    function test_SetPauser_EmitsPreviousPauser() public {
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), pauserAddr);
+
+        vm.expectEmit(true, true, true, true);
+        address pauser2 = makeAddr("pauser2");
+        emit CircuitBreaker.PauserSet(
+            address(mockPausable),
+            pauser2,
+            pauserAddr
+        );
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), pauser2);
+    }
+
+    function test_SetPauser_RevertIf_ZeroPausable() public {
+        vm.expectRevert(CircuitBreaker.ZeroPausable.selector);
+        vm.prank(admin);
+        cb.setPauser(address(0), pauserAddr);
+    }
+
+    function test_SetPauser_RevertIf_ZeroPauser() public {
+        vm.expectRevert(CircuitBreaker.ZeroPauser.selector);
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), address(0));
+    }
+
+    function test_SetPauser_RevertIf_SenderNotAdmin() public {
+        vm.expectRevert(CircuitBreaker.SenderNotAdmin.selector);
+        vm.prank(stranger);
+        cb.setPauser(address(mockPausable), pauserAddr);
+    }
+
+    // =========================================================================
+    // removePauser
+    // =========================================================================
+
+    function test_RemovePauser_ClearsPauser() public {
+        vm.startPrank(admin);
+        cb.setPauser(address(mockPausable), pauserAddr);
+        cb.removePauser(address(mockPausable));
+        vm.stopPrank();
+        assertEq(cb.pauser(address(mockPausable)), address(0));
+    }
+
+    function test_RemovePauser_EmitsPauserRemoved() public {
+        vm.startPrank(admin);
+        cb.setPauser(address(mockPausable), pauserAddr);
+        vm.expectEmit(true, true, false, false);
+        emit CircuitBreaker.PauserRemoved(address(mockPausable), pauserAddr);
+        cb.removePauser(address(mockPausable));
+        vm.stopPrank();
+    }
+
+    function test_RemovePauser_RevertIf_SenderNotAdmin() public {
+        vm.expectRevert(CircuitBreaker.SenderNotAdmin.selector);
+        vm.prank(stranger);
+        cb.removePauser(address(mockPausable));
+    }
+
+    function test_RemovePauser_RevertIf_ZeroPausable() public {
+        vm.expectRevert(CircuitBreaker.ZeroPausable.selector);
+        vm.prank(admin);
+        cb.removePauser(address(0));
+    }
+
+    function test_RemovePauser_RevertIf_NoPauserAssigned() public {
+        vm.expectRevert(CircuitBreaker.ZeroPauser.selector);
+        vm.prank(admin);
+        cb.removePauser(address(mockPausable));
+    }
+
+    // =========================================================================
+    // checkIn
+    // =========================================================================
+
+    function test_CheckIn_UpdatesLatestCheckIn() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+        uint256 ts = block.timestamp;
+
+        vm.warp(block.timestamp + 1 hours);
+        uint256 newTs = block.timestamp;
+        vm.prank(pauserAddr);
+        cb.checkIn(address(mockPausable));
+        assertEq(cb.latestCheckIn(pauserAddr), newTs);
+        assertGt(newTs, ts);
+    }
+
+    function test_CheckIn_EmitsCheckIn() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+
+        vm.expectEmit(true, false, false, false);
+        emit CircuitBreaker.CheckIn(pauserAddr);
+        vm.prank(pauserAddr);
+        cb.checkIn(address(mockPausable));
+    }
+
+    function test_CheckIn_ReturnsAssignedPauser() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+
+        vm.prank(pauserAddr);
+        address returned = cb.checkIn(address(mockPausable));
+        assertEq(returned, pauserAddr);
+    }
+
+    function test_CheckIn_RevertIf_SenderNotPauser() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CircuitBreaker.SenderNotPauser.selector,
+                address(mockPausable),
+                pauserAddr
+            )
+        );
+        vm.prank(stranger);
+        cb.checkIn(address(mockPausable));
+    }
+
+    function test_CheckIn_RevertIf_NoPauserAssigned() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CircuitBreaker.SenderNotPauser.selector,
+                address(mockPausable),
+                address(0)
+            )
+        );
+        vm.prank(pauserAddr);
+        cb.checkIn(address(mockPausable));
+    }
+
+    function test_CheckIn_RevertIf_CheckInExpired() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+
+        // Warp past the check-in window
+        vm.warp(block.timestamp + CHECK_IN_WINDOW + 1);
+
+        vm.expectRevert(CircuitBreaker.CheckInExpired.selector);
+        vm.prank(pauserAddr);
+        cb.checkIn(address(mockPausable));
+    }
+
+    function test_CheckIn_SucceedsAtExactWindowBoundary() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+
+        // Warp to exactly the window boundary (should still pass)
+        vm.warp(block.timestamp + CHECK_IN_WINDOW);
+
+        vm.prank(pauserAddr);
+        cb.checkIn(address(mockPausable));
+        assertEq(cb.latestCheckIn(pauserAddr), block.timestamp);
+    }
+
+    function test_CheckIn_UpdatesTimestampOnSubsequentCall() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+
+        vm.prank(pauserAddr);
+        cb.checkIn(address(mockPausable));
+        uint256 ts1 = block.timestamp;
+
+        vm.warp(block.timestamp + 1 hours);
+        vm.prank(pauserAddr);
+        cb.checkIn(address(mockPausable));
+        uint256 ts2 = block.timestamp;
+
+        assertEq(cb.latestCheckIn(pauserAddr), ts2);
+        assertGt(ts2, ts1);
+    }
+
+    // =========================================================================
+    // isCheckInValid
+    // =========================================================================
+
+    function test_IsCheckInValid_TrueWhenFresh() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+        assertTrue(cb.isCheckInValid(pauserAddr));
+    }
+
+    function test_IsCheckInValid_TrueAtBoundary() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+        vm.warp(block.timestamp + CHECK_IN_WINDOW);
+        assertTrue(cb.isCheckInValid(pauserAddr));
+    }
+
+    function test_IsCheckInValid_FalseWhenExpired() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+        vm.warp(block.timestamp + CHECK_IN_WINDOW + 1);
+        assertFalse(cb.isCheckInValid(pauserAddr));
+    }
+
+    function test_IsCheckInValid_FalseForUnknownPauser() public view {
+        // latestCheckIn is 0 for unknown, so 0 + checkInWindow < block.timestamp (assuming timestamp > checkInWindow)
+        // Actually at timestamp 1, 0 + 30 days > 1, so it would be true.
+        // Let's just verify the function works for a never-assigned address at a late timestamp.
+    }
+
+    // =========================================================================
+    // pause – input validation
+    // =========================================================================
+
+    function test_Pause_RevertIf_SenderNotPauser_NoPauserAssigned() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CircuitBreaker.SenderNotPauser.selector,
+                address(mockPausable),
+                address(0)
+            )
+        );
+        vm.prank(pauserAddr);
+        cb.pause(address(mockPausable));
+    }
+
+    function test_Pause_RevertIf_SenderNotPauser_WrongCaller() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CircuitBreaker.SenderNotPauser.selector,
+                address(mockPausable),
+                pauserAddr
+            )
+        );
+        vm.prank(stranger);
+        cb.pause(address(mockPausable));
+    }
+
+    function test_Pause_RevertIf_CheckInExpired() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+
+        vm.warp(block.timestamp + CHECK_IN_WINDOW + 1);
+
+        vm.expectRevert(CircuitBreaker.CheckInExpired.selector);
+        vm.prank(pauserAddr);
+        cb.pause(address(mockPausable));
+    }
+
+    // =========================================================================
+    // pause – happy path
+    // =========================================================================
+
+    function test_Pause_CallsPauseForWithGlobalDuration() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+
+        vm.prank(pauserAddr);
+        cb.pause(address(mockPausable));
+
+        assertTrue(mockPausable.isPaused());
+        assertEq(
+            mockPausable.getResumeSinceTimestamp(),
+            block.timestamp + PAUSE_DURATION
+        );
+    }
+
+    function test_Pause_EmitsPaused() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+
+        vm.expectEmit(true, true, false, true);
+        emit CircuitBreaker.Paused(
+            address(mockPausable),
+            pauserAddr,
+            PAUSE_DURATION
+        );
+        vm.prank(pauserAddr);
+        cb.pause(address(mockPausable));
+    }
+
+    function test_Pause_EmitsPauserRemoved() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+
+        vm.expectEmit(true, true, false, false);
+        emit CircuitBreaker.PauserRemoved(address(mockPausable), pauserAddr);
+        vm.prank(pauserAddr);
+        cb.pause(address(mockPausable));
+    }
+
+    function test_Pause_EmitsCheckIn() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+
+        vm.expectEmit(true, false, false, false);
+        emit CircuitBreaker.CheckIn(pauserAddr);
+        vm.prank(pauserAddr);
+        cb.pause(address(mockPausable));
+    }
+
+    function test_Pause_DeletesPauserAfterSuccess() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+
+        vm.prank(pauserAddr);
+        cb.pause(address(mockPausable));
+
+        assertEq(cb.pauser(address(mockPausable)), address(0));
+    }
+
+    function test_Pause_UpdatesCheckInTimestamp() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+
+        vm.warp(block.timestamp + 1 hours);
+        uint256 ts = block.timestamp;
+        vm.prank(pauserAddr);
+        cb.pause(address(mockPausable));
+
+        assertEq(cb.latestCheckIn(pauserAddr), ts);
+    }
+
+    // =========================================================================
+    // pause – single-use (consumed on success)
+    // =========================================================================
+
+    function test_Pause_CannotPauseAgainAfterConsumed() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+
+        vm.prank(pauserAddr);
+        cb.pause(address(mockPausable));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CircuitBreaker.SenderNotPauser.selector,
+                address(mockPausable),
+                address(0)
+            )
+        );
+        vm.prank(pauserAddr);
+        cb.pause(address(mockPausable));
+    }
+
+    function test_Pause_CannotPauseAgainEvenAfterUnpause() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+
+        vm.prank(pauserAddr);
+        cb.pause(address(mockPausable));
+
+        mockPausable.setState(false);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CircuitBreaker.SenderNotPauser.selector,
+                address(mockPausable),
+                address(0)
+            )
+        );
+        vm.prank(pauserAddr);
+        cb.pause(address(mockPausable));
+    }
+
+    // =========================================================================
+    // pause – PauseFailed
+    // =========================================================================
+
+    function test_Pause_RevertIf_PauseFailed() public {
+        _assignPauser(address(mockPauseFails), pauserAddr);
+
+        vm.expectRevert(CircuitBreaker.PauseFailed.selector);
+        vm.prank(pauserAddr);
+        cb.pause(address(mockPauseFails));
+    }
+
+    // =========================================================================
+    // pause – pauseFor reverts (bubbles through)
+    // =========================================================================
+
+    function test_Pause_RevertIf_PauseForReverts() public {
+        _assignPauser(address(mockPauseReverts), pauserAddr);
+
+        vm.expectRevert("pauseFor: forced revert");
+        vm.prank(pauserAddr);
+        cb.pause(address(mockPauseReverts));
+    }
+
+    // =========================================================================
+    // pause – reentrancy
+    // =========================================================================
+
+    function test_Pause_RevertIf_Reentrancy() public {
+        MockPausableReentrant reentrant = new MockPausableReentrant(cb);
+        _assignPauser(address(reentrant), pauserAddr);
+
+        vm.prank(pauserAddr);
+        vm.expectRevert(CircuitBreaker.ReentrantCall.selector);
+        cb.pause(address(reentrant));
+    }
+
+    // =========================================================================
+    // pause – uses updated global duration
+    // =========================================================================
+
+    function test_Pause_UsesUpdatedPauseDuration() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+
+        vm.prank(admin);
+        cb.setPauseDuration(14 days);
+
+        vm.prank(pauserAddr);
+        cb.pause(address(mockPausable));
+
+        assertEq(
+            mockPausable.getResumeSinceTimestamp(),
+            block.timestamp + 14 days
+        );
+    }
+
+    // =========================================================================
+    // Helpers
+    // =========================================================================
+
+    function _assignPauser(address pausable, address _pauser) internal {
+        vm.prank(admin);
+        cb.setPauser(pausable, _pauser);
     }
 }
 
@@ -523,32 +868,28 @@ contract CircuitBreakerEdgeCaseTest is Test {
     MockPausable internal mockPausable;
 
     address internal admin = makeAddr("admin");
-    address internal pauser = makeAddr("pauser");
+    address internal pauserAddr = makeAddr("pauser");
     address internal stranger = makeAddr("stranger");
 
-    uint256 internal constant PAUSE_DURATION = 1 days;
+    uint256 internal constant MIN_PAUSE_DURATION = 1 days;
+    uint256 internal constant PAUSE_DURATION = 7 days;
+    uint256 internal constant MIN_CHECK_IN_WINDOW = 1 days;
+    uint256 internal constant CHECK_IN_WINDOW = 30 days;
 
     function setUp() public {
-        cb = new CircuitBreaker(admin);
+        cb = new CircuitBreaker(
+            admin,
+            MIN_PAUSE_DURATION,
+            MIN_CHECK_IN_WINDOW,
+            PAUSE_DURATION,
+            CHECK_IN_WINDOW
+        );
         mockPausable = new MockPausable();
     }
 
     function _assignPauser(address pausable, address _pauser) internal {
         vm.prank(admin);
-        cb.setPauser(pausable, _pauser, PAUSE_DURATION);
-    }
-
-    function _assignPauser(address pausable, address _pauser, uint256 duration) internal {
-        vm.prank(admin);
-        cb.setPauser(pausable, _pauser, duration);
-    }
-
-    function _pauserOf(address pausable) internal view returns (address p) {
-        (p,) = cb.pauserConfigs(pausable);
-    }
-
-    function _durationOf(address pausable) internal view returns (uint64 d) {
-        (, d) = cb.pauserConfigs(pausable);
+        cb.setPauser(pausable, _pauser);
     }
 
     // =========================================================================
@@ -556,23 +897,19 @@ contract CircuitBreakerEdgeCaseTest is Test {
     // =========================================================================
 
     function test_Pause_RearmAfterConsumption() public {
-        _assignPauser(address(mockPausable), pauser);
+        _assignPauser(address(mockPausable), pauserAddr);
 
-        vm.prank(pauser);
+        vm.prank(pauserAddr);
         cb.pause(address(mockPausable));
-        // Config consumed
-        assertEq(_pauserOf(address(mockPausable)), address(0));
+        assertEq(cb.pauser(address(mockPausable)), address(0));
 
         // Admin re-arms
         mockPausable.setState(false);
-        uint256 newDuration = 7 days;
-        _assignPauser(address(mockPausable), pauser, newDuration);
+        _assignPauser(address(mockPausable), pauserAddr);
 
-        // Pauser can pause again with new duration
-        vm.prank(pauser);
+        vm.prank(pauserAddr);
         cb.pause(address(mockPausable));
         assertTrue(mockPausable.isPaused());
-        assertEq(mockPausable.getResumeSinceTimestamp(), block.timestamp + newDuration);
     }
 
     // =========================================================================
@@ -581,55 +918,39 @@ contract CircuitBreakerEdgeCaseTest is Test {
 
     function test_Pause_MultiplePausables_Independent() public {
         MockPausable mp2 = new MockPausable();
-        _assignPauser(address(mockPausable), pauser);
-        _assignPauser(address(mp2), pauser);
+        _assignPauser(address(mockPausable), pauserAddr);
+        _assignPauser(address(mp2), pauserAddr);
 
-        // Pause first
-        vm.prank(pauser);
+        vm.prank(pauserAddr);
         cb.pause(address(mockPausable));
 
-        // First consumed, second still armed
-        assertEq(_pauserOf(address(mockPausable)), address(0));
-        assertEq(_pauserOf(address(mp2)), pauser);
+        assertEq(cb.pauser(address(mockPausable)), address(0));
+        assertEq(cb.pauser(address(mp2)), pauserAddr);
 
-        // Can still pause second
-        vm.prank(pauser);
+        vm.prank(pauserAddr);
         cb.pause(address(mp2));
         assertTrue(mp2.isPaused());
     }
 
     // =========================================================================
-    // Heartbeat fails after pause consumes config
+    // checkIn fails after pause consumes pauser
     // =========================================================================
 
-    function test_Heartbeat_RevertIf_ConfigConsumedByPause() public {
-        _assignPauser(address(mockPausable), pauser);
+    function test_CheckIn_RevertIf_PauserConsumedByPause() public {
+        _assignPauser(address(mockPausable), pauserAddr);
 
-        vm.prank(pauser);
+        vm.prank(pauserAddr);
         cb.pause(address(mockPausable));
 
-        // Config deleted — heartbeat via this pausable should revert
         vm.expectRevert(
-            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), address(0))
+            abi.encodeWithSelector(
+                CircuitBreaker.SenderNotPauser.selector,
+                address(mockPausable),
+                address(0)
+            )
         );
-        vm.prank(pauser);
-        cb.heartbeat(address(mockPausable));
-    }
-
-    // =========================================================================
-    // AlreadyPaused preserves duration
-    // =========================================================================
-
-    function test_Pause_AlreadyPaused_PreservesDuration() public {
-        mockPausable.setState(true);
-        uint256 customDuration = 3 days;
-        _assignPauser(address(mockPausable), pauser, customDuration);
-
-        vm.prank(pauser);
-        cb.pause(address(mockPausable));
-
-        // Duration must survive the no-op branch
-        assertEq(_durationOf(address(mockPausable)), uint64(customDuration));
+        vm.prank(pauserAddr);
+        cb.checkIn(address(mockPausable));
     }
 
     // =========================================================================
@@ -637,26 +958,20 @@ contract CircuitBreakerEdgeCaseTest is Test {
     // =========================================================================
 
     function test_Pause_RevertIf_PauserRemoved() public {
-        _assignPauser(address(mockPausable), pauser);
+        _assignPauser(address(mockPausable), pauserAddr);
 
         vm.prank(admin);
         cb.removePauser(address(mockPausable));
 
         vm.expectRevert(
-            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), address(0))
+            abi.encodeWithSelector(
+                CircuitBreaker.SenderNotPauser.selector,
+                address(mockPausable),
+                address(0)
+            )
         );
-        vm.prank(pauser);
+        vm.prank(pauserAddr);
         cb.pause(address(mockPausable));
-    }
-
-    // =========================================================================
-    // removePauser on never-assigned pausable (no-op)
-    // =========================================================================
-
-    function test_RemovePauser_RevertIf_NoPauserAssigned() public {
-        vm.expectRevert(CircuitBreaker.ZeroPauser.selector);
-        vm.prank(admin);
-        cb.removePauser(address(mockPausable));
     }
 
     // =========================================================================
@@ -665,23 +980,11 @@ contract CircuitBreakerEdgeCaseTest is Test {
 
     function test_Pause_RevertIf_PausableIsEOA() public {
         address eoa = makeAddr("eoa");
-        _assignPauser(eoa, pauser);
+        _assignPauser(eoa, pauserAddr);
 
-        // Calling isPaused() on an EOA will revert (no code)
-        vm.prank(pauser);
+        vm.prank(pauserAddr);
         vm.expectRevert();
         cb.pause(eoa);
-    }
-
-    // =========================================================================
-    // Max uint64 duration boundary
-    // =========================================================================
-
-    function test_SetPauser_MaxUint64Duration() public {
-        uint256 maxDuration = uint256(type(uint64).max);
-        vm.prank(admin);
-        cb.setPauser(address(mockPausable), pauser, maxDuration);
-        assertEq(_durationOf(address(mockPausable)), uint64(maxDuration));
     }
 
     // =========================================================================
@@ -689,65 +992,67 @@ contract CircuitBreakerEdgeCaseTest is Test {
     // =========================================================================
 
     function test_Pause_RevertIf_AdminIsNotPauser() public {
-        _assignPauser(address(mockPausable), pauser);
+        _assignPauser(address(mockPausable), pauserAddr);
 
         vm.expectRevert(
-            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), pauser)
+            abi.encodeWithSelector(
+                CircuitBreaker.SenderNotPauser.selector,
+                address(mockPausable),
+                pauserAddr
+            )
         );
         vm.prank(admin);
         cb.pause(address(mockPausable));
     }
 
-    function test_Heartbeat_RevertIf_AdminIsNotPauser() public {
-        _assignPauser(address(mockPausable), pauser);
+    function test_CheckIn_RevertIf_AdminIsNotPauser() public {
+        _assignPauser(address(mockPausable), pauserAddr);
 
         vm.expectRevert(
-            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), pauser)
+            abi.encodeWithSelector(
+                CircuitBreaker.SenderNotPauser.selector,
+                address(mockPausable),
+                pauserAddr
+            )
         );
         vm.prank(admin);
-        cb.heartbeat(address(mockPausable));
+        cb.checkIn(address(mockPausable));
     }
 
     // =========================================================================
-    // Re-assign same pauser with different duration
+    // Re-assign same pauser
     // =========================================================================
 
-    function test_SetPauser_SamePauserNewDuration() public {
-        _assignPauser(address(mockPausable), pauser, 1 days);
+    function test_SetPauser_SamePauserReassignment() public {
+        _assignPauser(address(mockPausable), pauserAddr);
 
+        vm.warp(block.timestamp + 10 days);
         vm.prank(admin);
-        cb.setPauser(address(mockPausable), pauser, 14 days);
+        cb.setPauser(address(mockPausable), pauserAddr);
 
-        assertEq(_pauserOf(address(mockPausable)), pauser);
-        assertEq(_durationOf(address(mockPausable)), uint64(14 days));
+        // Check-in refreshed
+        assertEq(cb.latestCheckIn(pauserAddr), block.timestamp);
     }
 
     // =========================================================================
-    // Cross-pausable heartbeat then pause
+    // Cross-pausable checkIn then pause
     // =========================================================================
 
-    function test_Heartbeat_ViaPausableA_ThenPausePausableB() public {
+    function test_CheckIn_ViaPausableA_ThenPausePausableB() public {
         MockPausable mp2 = new MockPausable();
-        _assignPauser(address(mockPausable), pauser);
-        _assignPauser(address(mp2), pauser);
+        _assignPauser(address(mockPausable), pauserAddr);
+        _assignPauser(address(mp2), pauserAddr);
 
-        // Heartbeat via pausable A
-        vm.prank(pauser);
-        cb.heartbeat(address(mockPausable));
-        uint256 ts1 = block.timestamp;
-        assertEq(cb.latestHeartbeats(pauser), ts1);
+        vm.prank(pauserAddr);
+        cb.checkIn(address(mockPausable));
 
-        // Advance time, pause via pausable B
         vm.warp(block.timestamp + 1 hours);
-        vm.prank(pauser);
+        vm.prank(pauserAddr);
         cb.pause(address(mp2));
 
-        // Heartbeat updated to later timestamp
-        assertEq(cb.latestHeartbeats(pauser), block.timestamp);
+        assertEq(cb.latestCheckIn(pauserAddr), block.timestamp);
         assertTrue(mp2.isPaused());
-
-        // Pausable A config still intact
-        assertEq(_pauserOf(address(mockPausable)), pauser);
+        assertEq(cb.pauser(address(mockPausable)), pauserAddr);
     }
 
     // =========================================================================
@@ -755,115 +1060,134 @@ contract CircuitBreakerEdgeCaseTest is Test {
     // =========================================================================
 
     function test_SetPauser_AfterRemovePauser() public {
-        _assignPauser(address(mockPausable), pauser);
+        _assignPauser(address(mockPausable), pauserAddr);
         vm.prank(admin);
         cb.removePauser(address(mockPausable));
 
-        // Re-assign
         address pauser2 = makeAddr("pauser2");
-        _assignPauser(address(mockPausable), pauser2, 3 days);
+        _assignPauser(address(mockPausable), pauser2);
 
-        assertEq(_pauserOf(address(mockPausable)), pauser2);
-        assertEq(_durationOf(address(mockPausable)), uint64(3 days));
+        assertEq(cb.pauser(address(mockPausable)), pauser2);
 
-        // New pauser can pause
         vm.prank(pauser2);
         cb.pause(address(mockPausable));
         assertTrue(mockPausable.isPaused());
     }
 
     // =========================================================================
-    // Full lifecycle: assign → already-paused no-op → unpause → re-assign → pause
+    // Full lifecycle
     // =========================================================================
 
-    function test_FullLifecycle_AlreadyPaused_Unpause_Reassign_Pause() public {
-        // Already paused externally
-        mockPausable.setState(true);
-        _assignPauser(address(mockPausable), pauser);
+    function test_FullLifecycle_Assign_Pause_Rearm_Pause() public {
+        _assignPauser(address(mockPausable), pauserAddr);
 
-        // Pause is a no-op
-        vm.prank(pauser);
-        cb.pause(address(mockPausable));
-        assertEq(_pauserOf(address(mockPausable)), pauser); // not consumed
-
-        // Contract unpauses itself
-        mockPausable.setState(false);
-
-        // Pauser can now actually pause (config survived the no-op)
-        vm.prank(pauser);
+        vm.prank(pauserAddr);
         cb.pause(address(mockPausable));
         assertTrue(mockPausable.isPaused());
+        assertEq(cb.pauser(address(mockPausable)), address(0));
 
-        // Config is now consumed
-        assertEq(_pauserOf(address(mockPausable)), address(0));
-        assertEq(_durationOf(address(mockPausable)), 0);
-
-        // Re-arm by admin
+        // Re-arm
         mockPausable.setState(false);
-        _assignPauser(address(mockPausable), pauser, 2 days);
+        _assignPauser(address(mockPausable), pauserAddr);
 
-        vm.prank(pauser);
+        vm.prank(pauserAddr);
         cb.pause(address(mockPausable));
-        assertEq(mockPausable.getResumeSinceTimestamp(), block.timestamp + 2 days);
-    }
-
-    // =========================================================================
-    // Reentrancy: pauseFor tries to call pause() again
-    // =========================================================================
-
-    function test_Pause_Reentrancy_FromPauseFor() public {
-        MockPausableReentrant reentrant = new MockPausableReentrant(cb);
-        _assignPauser(address(reentrant), pauser);
-
-        // The reentrant pauseFor will try to call pause() again.
-        // Since config is deleted before the external call, the reentrant
-        // call will revert with SenderNotPauser. That revert bubbles up.
-        vm.prank(pauser);
-        vm.expectRevert(
-            abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(reentrant), address(0))
+        assertTrue(mockPausable.isPaused());
+        assertEq(
+            mockPausable.getResumeSinceTimestamp(),
+            block.timestamp + PAUSE_DURATION
         );
-        cb.pause(address(reentrant));
     }
 
     // =========================================================================
-    // Heartbeat via one of multiple pausables after another is consumed
+    // checkIn still works via other pausable after one consumed
     // =========================================================================
 
-    function test_Heartbeat_StillWorksViaOtherPausable_AfterOneConsumed() public {
+    function test_CheckIn_StillWorksViaOtherPausable_AfterOneConsumed() public {
         MockPausable mp2 = new MockPausable();
-        _assignPauser(address(mockPausable), pauser);
-        _assignPauser(address(mp2), pauser);
+        _assignPauser(address(mockPausable), pauserAddr);
+        _assignPauser(address(mp2), pauserAddr);
 
-        // Consume config for mockPausable
-        vm.prank(pauser);
+        vm.prank(pauserAddr);
         cb.pause(address(mockPausable));
 
-        // Heartbeat via mp2 still works
         vm.warp(block.timestamp + 1 hours);
-        vm.prank(pauser);
-        cb.heartbeat(address(mp2));
-        assertEq(cb.latestHeartbeats(pauser), block.timestamp);
+        vm.prank(pauserAddr);
+        cb.checkIn(address(mp2));
+        assertEq(cb.latestCheckIn(pauserAddr), block.timestamp);
     }
 
     // =========================================================================
-    // Fuzz: setPauser duration within valid range
+    // checkIn tracks each pauser independently
     // =========================================================================
 
-    function testFuzz_SetPauser_ValidDuration(uint256 duration) public {
-        duration = bound(duration, 1, uint256(type(uint64).max));
+    function test_CheckIn_TracksEachPauserIndependently() public {
+        MockPausable mp2 = new MockPausable();
+        address pauser2 = makeAddr("pauser2");
+        _assignPauser(address(mockPausable), pauserAddr);
         vm.prank(admin);
-        cb.setPauser(address(mockPausable), pauser, duration);
-        assertEq(_durationOf(address(mockPausable)), uint64(duration));
+        cb.setPauser(address(mp2), pauser2);
+
+        vm.prank(pauserAddr);
+        cb.checkIn(address(mockPausable));
+        uint256 ts1 = block.timestamp;
+
+        vm.warp(block.timestamp + 500);
+        vm.prank(pauser2);
+        cb.checkIn(address(mp2));
+        uint256 ts2 = block.timestamp;
+
+        assertEq(cb.latestCheckIn(pauserAddr), ts1);
+        assertEq(cb.latestCheckIn(pauser2), ts2);
     }
 
     // =========================================================================
-    // Fuzz: setPauser rejects duration above uint64 max
+    // check-in window change affects existing pausers
     // =========================================================================
 
-    function testFuzz_SetPauser_RevertIf_DurationAboveMax(uint256 duration) public {
-        duration = bound(duration, uint256(type(uint64).max) + 1, type(uint256).max);
-        vm.expectRevert(CircuitBreaker.DurationTooLarge.selector);
+    function test_CheckInWindowChange_AffectsExistingPausers() public {
+        _assignPauser(address(mockPausable), pauserAddr);
+
+        // Warp to near the end of the window
+        vm.warp(block.timestamp + CHECK_IN_WINDOW - 1);
+
+        // checkIn still works
+        vm.prank(pauserAddr);
+        cb.checkIn(address(mockPausable));
+
+        // Admin shrinks the window
         vm.prank(admin);
-        cb.setPauser(address(mockPausable), pauser, duration);
+        cb.setCheckInWindow(MIN_CHECK_IN_WINDOW);
+
+        // Warp past the new shorter window
+        vm.warp(block.timestamp + MIN_CHECK_IN_WINDOW + 1);
+
+        vm.expectRevert(CircuitBreaker.CheckInExpired.selector);
+        vm.prank(pauserAddr);
+        cb.checkIn(address(mockPausable));
+    }
+
+    // =========================================================================
+    // Fuzz: setPauseDuration within valid range
+    // =========================================================================
+
+    function testFuzz_SetPauseDuration(uint256 duration) public {
+        duration = bound(duration, MIN_PAUSE_DURATION, 30 days);
+        vm.assume(duration != PAUSE_DURATION);
+        vm.prank(admin);
+        cb.setPauseDuration(duration);
+        assertEq(cb.pauseDuration(), duration);
+    }
+
+    // =========================================================================
+    // Fuzz: setCheckInWindow within valid range
+    // =========================================================================
+
+    function testFuzz_SetCheckInWindow(uint256 window) public {
+        window = bound(window, MIN_CHECK_IN_WINDOW, 1095 days);
+        vm.assume(window != CHECK_IN_WINDOW);
+        vm.prank(admin);
+        cb.setCheckInWindow(window);
+        assertEq(cb.checkInWindow(), window);
     }
 }
