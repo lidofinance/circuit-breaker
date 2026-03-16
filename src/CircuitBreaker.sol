@@ -106,6 +106,17 @@ contract CircuitBreaker {
     error SenderNotAdmin();
     error SenderNotPauser(address pausable, address pauser);
     error PauseFailed();
+    error ReentrantCall();
+
+    /// @dev Transient reentrancy lock
+    bool transient _lock;
+
+    modifier nonReentrant() {
+        require(!_lock, ReentrantCall());
+        _lock = true;
+        _;
+        _lock = false;
+    }
 
     modifier onlyAdmin() {
         require(msg.sender == ADMIN, SenderNotAdmin());
@@ -211,7 +222,7 @@ contract CircuitBreaker {
     ///         re-assignment from the admin.
     ///         Batching can be done externally (e.g. multisig multi-send).
     /// @param  _pausable Contract to pause.
-    function pause(address _pausable) external {
+    function pause(address _pausable) external nonReentrant {
         address assignedPauser = checkIn(_pausable);
 
         uint256 _pauseDuration = pauseDuration;
