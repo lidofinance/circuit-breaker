@@ -210,6 +210,7 @@ contract CircuitBreaker {
     ///         to prevent strangers from calling this function and creating noise
     ///         for monitoring.
     /// @param  _pausable Any pausable the caller is registered as pauser for.
+    /// @return assignedPauser The pauser address assigned to the pausable.
     function checkIn(address _pausable) public returns (address assignedPauser) {
         assignedPauser = pauser[_pausable];
         require(
