@@ -324,7 +324,7 @@ contract CircuitBreakerTest is Test {
     function test_SetPauser_SetsPauser() public {
         vm.prank(admin);
         cb.setPauser(address(mockPausable), pauserAddr);
-        assertEq(cb.pauser(address(mockPausable)), pauserAddr);
+        assertEq(cb.pauserOf(address(mockPausable)), pauserAddr);
     }
 
     function test_SetPauser_SetsCheckIn() public {
@@ -353,7 +353,7 @@ contract CircuitBreakerTest is Test {
         cb.setPauser(address(mockPausable), pauserAddr);
         cb.setPauser(address(mockPausable), pauser2);
         vm.stopPrank();
-        assertEq(cb.pauser(address(mockPausable)), pauser2);
+        assertEq(cb.pauserOf(address(mockPausable)), pauser2);
     }
 
     function test_SetPauser_EmitsPreviousPauser() public {
@@ -394,7 +394,7 @@ contract CircuitBreakerTest is Test {
         cb.setPauser(address(mockPausable), pauserAddr);
         cb.removePauser(address(mockPausable));
         vm.stopPrank();
-        assertEq(cb.pauser(address(mockPausable)), address(0));
+        assertEq(cb.pauserOf(address(mockPausable)), address(0));
     }
 
     function test_RemovePauser_EmitsPauserRemoved() public {
@@ -419,7 +419,7 @@ contract CircuitBreakerTest is Test {
     }
 
     function test_RemovePauser_RevertIf_NoPauserAssigned() public {
-        vm.expectRevert(CircuitBreaker.ZeroPauser.selector);
+        vm.expectRevert(CircuitBreaker.PauserNotSet.selector);
         vm.prank(admin);
         cb.removePauser(address(mockPausable));
     }
@@ -449,12 +449,12 @@ contract CircuitBreakerTest is Test {
         cb.checkIn(address(mockPausable));
     }
 
-    function test_CheckIn_ReturnsAssignedPauser() public {
+    function test_CheckIn_SucceedsForAssignedPauser() public {
         _assignPauser(address(mockPausable), pauserAddr);
 
         vm.prank(pauserAddr);
-        address returned = cb.checkIn(address(mockPausable));
-        assertEq(returned, pauserAddr);
+        cb.checkIn(address(mockPausable));
+        assertEq(cb.latestCheckIn(pauserAddr), block.timestamp);
     }
 
     function test_CheckIn_RevertIf_SenderNotPauser() public {
@@ -619,7 +619,7 @@ contract CircuitBreakerTest is Test {
         vm.prank(pauserAddr);
         cb.pause(address(mockPausable));
 
-        assertEq(cb.pauser(address(mockPausable)), address(0));
+        assertEq(cb.pauserOf(address(mockPausable)), address(0));
     }
 
     function test_Pause_UpdatesCheckInTimestamp() public {
@@ -762,7 +762,7 @@ contract CircuitBreakerEdgeCaseTest is Test {
 
         vm.prank(pauserAddr);
         cb.pause(address(mockPausable));
-        assertEq(cb.pauser(address(mockPausable)), address(0));
+        assertEq(cb.pauserOf(address(mockPausable)), address(0));
 
         // Admin re-arms
         mockPausable.setState(false);
@@ -785,8 +785,8 @@ contract CircuitBreakerEdgeCaseTest is Test {
         vm.prank(pauserAddr);
         cb.pause(address(mockPausable));
 
-        assertEq(cb.pauser(address(mockPausable)), address(0));
-        assertEq(cb.pauser(address(mp2)), pauserAddr);
+        assertEq(cb.pauserOf(address(mockPausable)), address(0));
+        assertEq(cb.pauserOf(address(mp2)), pauserAddr);
 
         vm.prank(pauserAddr);
         cb.pause(address(mp2));
@@ -897,7 +897,7 @@ contract CircuitBreakerEdgeCaseTest is Test {
 
         assertEq(cb.latestCheckIn(pauserAddr), block.timestamp);
         assertTrue(mp2.isPaused());
-        assertEq(cb.pauser(address(mockPausable)), pauserAddr);
+        assertEq(cb.pauserOf(address(mockPausable)), pauserAddr);
     }
 
     // =========================================================================
@@ -912,7 +912,7 @@ contract CircuitBreakerEdgeCaseTest is Test {
         address pauser2 = makeAddr("pauser2");
         _assignPauser(address(mockPausable), pauser2);
 
-        assertEq(cb.pauser(address(mockPausable)), pauser2);
+        assertEq(cb.pauserOf(address(mockPausable)), pauser2);
 
         vm.prank(pauser2);
         cb.pause(address(mockPausable));
@@ -929,7 +929,7 @@ contract CircuitBreakerEdgeCaseTest is Test {
         vm.prank(pauserAddr);
         cb.pause(address(mockPausable));
         assertTrue(mockPausable.isPaused());
-        assertEq(cb.pauser(address(mockPausable)), address(0));
+        assertEq(cb.pauserOf(address(mockPausable)), address(0));
 
         // Re-arm
         mockPausable.setState(false);
