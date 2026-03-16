@@ -6,10 +6,11 @@ pragma solidity 0.8.34;
 /// @notice Interface that pausable contracts must implement to be compatible with CircuitBreaker.
 interface IPausable {
     /// @notice Returns whether the contract is currently paused.
+    /// @return True if the contract is currently paused.
     function isPaused() external view returns (bool);
 
     /// @notice Pauses the contract for a given duration.
-    /// @param  _duration Duration in seconds to pause for.
+    /// @param  _duration Pause duration in seconds.
     function pauseFor(uint256 _duration) external;
 }
 
@@ -17,7 +18,7 @@ interface IPausable {
 /// @author Lido
 /// @notice An emergency pauser contract activated by designated committees.
 ///
-///         Problem:
+/// @dev    Problem:
 ///         In an emergency situation such as an ongoing exploit, the DAO cannot respond
 ///         quickly due to the vote duration.
 ///
@@ -35,7 +36,7 @@ interface IPausable {
 ///         whose check-in has expired cannot pause. This ensures
 ///         that in case of emergency the committee is ready to respond.
 ///
-/// @dev    Design decisions:
+///         Design decisions:
 ///         - One pauser per pausable. Keeps accountability clear and simple.
 ///         - Single-use pause. The pauser mapping is deleted on use.
 ///         - Global pause duration. Controlled by admin, applies to all pausables.
@@ -75,18 +76,16 @@ contract CircuitBreaker {
     // =========================================================================
 
     /// @notice Duration in seconds passed to pauseFor() on trigger. Applies to all pausables.
-    ///         Controlled by the admin.
     uint256 public pauseDuration;
 
     /// @notice Duration in seconds within which a pauser must check in to remain eligible to pause.
-    ///         Controlled by the admin.
     uint256 public checkInWindow;
 
     /// @notice Per-pausable pauser address. Entry is deleted upon successful use.
     mapping(address pausable => address pauser) public pauserOf;
 
-    /// @notice Last timestamp each pauser proved liveness.
-    mapping(address pauser => uint256 latestCheckIn) public latestCheckIn;
+    /// @notice Latest timestamp a pauser proved liveness.
+    mapping(address pauser => uint256 timestamp) public latestCheckIn;
 
     /// @dev Transient reentrancy lock.
     bool transient _lock;
@@ -102,9 +101,9 @@ contract CircuitBreaker {
 
     event PauserSet(address indexed pausable, address indexed pauser, address indexed previousPauser);
     event PauserRemoved(address indexed pausable, address indexed pauser);
+    event CheckedIn(address indexed pauser);
 
     event Paused(address indexed pausable, address indexed pauser, uint256 pauseDuration);
-    event CheckIn(address indexed pauser);
 
     // =========================================================================
     // Errors
@@ -121,11 +120,12 @@ contract CircuitBreaker {
     error SamePauseDuration();
     error CheckInWindowOutOfRange();
     error SameCheckInWindow();
+
     error ZeroPausable();
     error ZeroPauser();
     error PauserNotSet();
 
-    error SenderNotAdmin();
+    error SenderNotAdmin(address expectedAdmin);
     error SenderNotPauser(address pausable, address assignedPauser);
 
     error CheckInExpired();
@@ -144,7 +144,7 @@ contract CircuitBreaker {
     }
 
     modifier onlyAdmin() {
-        require(msg.sender == ADMIN, SenderNotAdmin());
+        require(msg.sender == ADMIN, SenderNotAdmin(ADMIN));
         _;
     }
 
@@ -152,11 +152,11 @@ contract CircuitBreaker {
     // Constructor
     // =========================================================================
 
-    /// @param _admin Address that can assign pausers, set the pause duration, and set the check-in window.
+    /// @param _admin Admin address. Must not be zero or self.
     /// @param _minPauseDuration Minimum pause duration in seconds. Must be <= MAX_PAUSE_DURATION.
     /// @param _minCheckInWindow Minimum check-in window in seconds. Must be <= MAX_CHECK_IN_WINDOW.
-    /// @param _pauseDuration Initial pause duration in seconds.
-    /// @param _checkInWindow Initial check-in window in seconds.
+    /// @param _pauseDuration Initial pause duration in seconds. Must be within [_minPauseDuration, MAX_PAUSE_DURATION].
+    /// @param _checkInWindow Initial check-in window in seconds. Must be within [_minCheckInWindow, MAX_CHECK_IN_WINDOW].
     constructor(
         address _admin,
         uint256 _minPauseDuration,
@@ -181,13 +181,17 @@ contract CircuitBreaker {
 
         // --- Initial mutable state ---
 
-        require(_pauseDuration >= _minPauseDuration && _pauseDuration <= MAX_PAUSE_DURATION, PauseDurationOutOfRange());
+        require(
+            _pauseDuration >= MIN_PAUSE_DURATION && _pauseDuration <= MAX_PAUSE_DURATION, PauseDurationOutOfRange()
+        );
+        require(
+            _checkInWindow >= MIN_CHECK_IN_WINDOW && _checkInWindow <= MAX_CHECK_IN_WINDOW, CheckInWindowOutOfRange()
+        );
+
         pauseDuration = _pauseDuration;
-
-        require(_checkInWindow >= _minCheckInWindow && _checkInWindow <= MAX_CHECK_IN_WINDOW, CheckInWindowOutOfRange());
-        checkInWindow = _checkInWindow;
-
         emit PauseDurationSet(0, _pauseDuration);
+
+        checkInWindow = _checkInWindow;
         emit CheckInWindowSet(0, _checkInWindow);
     }
 
@@ -196,11 +200,13 @@ contract CircuitBreaker {
     // =========================================================================
 
     /// @notice Set the global pause duration applied to all pausables on trigger.
-    /// @param  _pauseDuration Duration in seconds. Must be within [MIN_PAUSE_DURATION, MAX_PAUSE_DURATION].
+    /// @param  _pauseDuration New pause duration in seconds. Must be within [MIN_PAUSE_DURATION, MAX_PAUSE_DURATION].
     function setPauseDuration(uint256 _pauseDuration) external onlyAdmin {
         uint256 previousPauseDuration = pauseDuration;
         require(_pauseDuration != previousPauseDuration, SamePauseDuration());
-        require(_pauseDuration >= MIN_PAUSE_DURATION && _pauseDuration <= MAX_PAUSE_DURATION, PauseDurationOutOfRange());
+        require(
+            _pauseDuration >= MIN_PAUSE_DURATION && _pauseDuration <= MAX_PAUSE_DURATION, PauseDurationOutOfRange()
+        );
 
         pauseDuration = _pauseDuration;
 
@@ -208,7 +214,7 @@ contract CircuitBreaker {
     }
 
     /// @notice Set the check-in window. Pausers must check in within this window to remain eligible to pause.
-    /// @param  _checkInWindow Duration in seconds. Must be within [MIN_CHECK_IN_WINDOW, MAX_CHECK_IN_WINDOW].
+    /// @param  _checkInWindow New check-in window in seconds. Must be within [MIN_CHECK_IN_WINDOW, MAX_CHECK_IN_WINDOW].
     function setCheckInWindow(uint256 _checkInWindow) external onlyAdmin {
         uint256 previousCheckInWindow = checkInWindow;
         require(_checkInWindow != previousCheckInWindow, SameCheckInWindow());
@@ -224,9 +230,10 @@ contract CircuitBreaker {
     /// @notice Assign or replace a pauser for a pausable contract.
     ///         Only 1 pauser per pausable, the previous pauser will be overwritten.
     ///         The pauser's check-in is set to the current timestamp on assignment.
-    /// @param  _pausable Pausable contract to assign a pauser to.
-    /// @param  _pauser Pauser address to assign to the pausable. Must be non-zero.
+    /// @param  _pausable Pausable contract address. Must be non-zero.
+    /// @param  _pauser Pauser address. Must be non-zero.
     /// @dev    Function does not check whether CircuitBreaker has the permission to pause.
+    ///         Re-assigning the same pauser is permitted and refreshes their check-in timestamp.
     function setPauser(address _pausable, address _pauser) external onlyAdmin {
         require(_pausable != address(0), ZeroPausable());
         require(_pauser != address(0), ZeroPauser());
@@ -236,18 +243,18 @@ contract CircuitBreaker {
         latestCheckIn[_pauser] = block.timestamp;
 
         emit PauserSet(_pausable, _pauser, previousPauser);
-        emit CheckIn(_pauser);
+        emit CheckedIn(_pauser);
     }
 
     /// @notice Remove the pauser for a pausable contract.
-    /// @param  _pausable Pausable contract to remove the pauser from.
+    /// @param  _pausable Pausable contract address. Must be non-zero.
     function removePauser(address _pausable) external onlyAdmin {
         require(_pausable != address(0), ZeroPausable());
-        address removedPauser = pauserOf[_pausable];
-        require(removedPauser != address(0), PauserNotSet());
+        address previousPauser = pauserOf[_pausable];
+        require(previousPauser != address(0), PauserNotSet());
 
         delete pauserOf[_pausable];
-        emit PauserRemoved(_pausable, removedPauser);
+        emit PauserRemoved(_pausable, previousPauser);
     }
 
     // =========================================================================
@@ -255,18 +262,18 @@ contract CircuitBreaker {
     // =========================================================================
 
     /// @notice Record a liveness proof. Called by pausers to maintain eligibility to pause.
-    ///         Also called internally by pause().
-    ///         The pausable contract is passed as the parameter to perform auth check
+    ///         Also invoked by `pause()` before triggering the pause.
+    /// @param  _pausable Pausable contract the caller is registered as pauser for.
+    /// @dev    The pausable contract is passed as the parameter to perform auth check
     ///         to prevent strangers from calling this function and creating noise
     ///         for monitoring.
-    /// @param  _pausable Any pausable the caller is registered as pauser for.
     function checkIn(address _pausable) public {
         address assignedPauser = pauserOf[_pausable];
         require(msg.sender == assignedPauser, SenderNotPauser(_pausable, assignedPauser));
         require(block.timestamp <= latestCheckIn[msg.sender] + checkInWindow, CheckInExpired());
 
         latestCheckIn[msg.sender] = block.timestamp;
-        emit CheckIn(msg.sender);
+        emit CheckedIn(msg.sender);
     }
 
     /// @notice Pause a pausable contract.
@@ -276,15 +283,15 @@ contract CircuitBreaker {
     ///         The pauser cannot pause the same contract again without explicit
     ///         re-assignment from the admin.
     ///         Batching can be done externally (e.g. multisig multi-send).
-    /// @param  _pausable Contract to pause.
+    /// @param  _pausable Pausable contract to pause.
     function pause(address _pausable) external nonReentrant {
         checkIn(_pausable);
 
         uint256 duration = pauseDuration;
-        IPausable targetPausable = IPausable(_pausable);
+        IPausable pausable = IPausable(_pausable);
 
-        targetPausable.pauseFor(duration);
-        require(targetPausable.isPaused(), PauseFailed());
+        pausable.pauseFor(duration);
+        require(pausable.isPaused(), PauseFailed());
 
         delete pauserOf[_pausable];
 
@@ -297,7 +304,8 @@ contract CircuitBreaker {
     // =========================================================================
 
     /// @notice Returns whether a pauser's check-in is valid (not expired).
-    /// @param  _pauser Address of the pauser to check.
+    /// @param  _pauser Pauser address to check.
+    /// @return True if the pauser's check-in has not expired.
     function isCheckInValid(address _pauser) external view returns (bool) {
         return block.timestamp <= latestCheckIn[_pauser] + checkInWindow;
     }
