@@ -165,13 +165,10 @@ contract CircuitBreaker {
     /// @param  _pausable Pausable contract to remove the pauser from.
     function removePauser(address _pausable) external onlyAdmin {
         require(_pausable != address(0), ZeroPausable());
-
         address removedPauser = pauser[_pausable];
         require(removedPauser != address(0), ZeroPauser());
 
-        delete pauser[_pausable];
-
-        emit PauserRemoved(_pausable, removedPauser);
+        _removePauser(_pausable, removedPauser);
     }
 
     // =========================================================================
@@ -184,10 +181,11 @@ contract CircuitBreaker {
     ///         to prevent strangers from calling this function and creating noise
     ///         for monitoring.
     /// @param  _pausable Any pausable the caller is registered as pauser for.
-    function checkIn(address _pausable) public {
+    function checkIn(address _pausable) public returns (address assignedPauser) {
+        assignedPauser = pauser[_pausable];
         require(
-            msg.sender == pauser[_pausable],
-            SenderNotPauser(_pausable, pauser[_pausable])
+            msg.sender == assignedPauser,
+            SenderNotPauser(_pausable, assignedPauser)
         );
         require(
             block.timestamp <= latestCheckIn[msg.sender] + checkInWindow,
@@ -212,17 +210,16 @@ contract CircuitBreaker {
     ///         Batching can be done externally (e.g. multisig multi-send).
     /// @param  _pausable Contract to pause.
     function pause(address _pausable) external {
-        checkIn(_pausable);
+        address assignedPauser = checkIn(_pausable);
 
-        address _pauser = pauser[_pausable];
         uint256 _pauseDuration = pauseDuration;
         IPausable _iPausable = IPausable(_pausable);
 
-        delete pauser[_pausable];
+        _removePauser(_pausable, assignedPauser);
         _iPausable.pauseFor(_pauseDuration);
         require(_iPausable.isPaused(), PauseFailed());
 
-        emit Paused(_pausable, _pauser, _pauseDuration);
+        emit Paused(_pausable, assignedPauser, _pauseDuration);
     }
 
     // =========================================================================
@@ -255,6 +252,12 @@ contract CircuitBreaker {
         checkInWindow = _checkInWindow;
 
         emit CheckInWindowSet(previousCheckInWindow, _checkInWindow);
+    }
+
+    /// @dev Removes a pauser from a pausable and emits the removal event.
+    function _removePauser(address _pausable, address _pauser) internal {
+        delete pauser[_pausable];
+        emit PauserRemoved(_pausable, _pauser);
     }
 
     /// @dev Records a check-in for the given pauser.
