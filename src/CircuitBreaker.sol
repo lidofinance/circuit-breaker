@@ -42,13 +42,13 @@ interface IPausable {
 ///         - Admin is DAO Agent or other DAO-controlled executor.
 contract CircuitBreaker {
     /// @notice Minimum pause duration that can be set by the admin.
-    uint256 public constant MIN_PAUSE_DURATION = 3 days;
+    uint256 public immutable MIN_PAUSE_DURATION;
 
     /// @notice Maximum pause duration that can be set by the admin.
     uint256 public constant MAX_PAUSE_DURATION = 30 days;
 
     /// @notice Minimum check-in window that can be set by the admin.
-    uint256 public constant MIN_CHECK_IN_WINDOW = 30 days;
+    uint256 public immutable MIN_CHECK_IN_WINDOW;
 
     /// @notice Maximum check-in window that can be set by the admin.
     uint256 public constant MAX_CHECK_IN_WINDOW = 1095 days;
@@ -123,19 +123,35 @@ contract CircuitBreaker {
         _;
     }
 
+    error ZeroMinPauseDuration();
+    error MinPauseDurationTooHigh();
+    error ZeroMinCheckInWindow();
+    error MinCheckInWindowTooHigh();
+
     /// @param _admin Address that can assign pausers, set the pause duration, and set the check-in window.
+    /// @param _minPauseDuration Minimum pause duration in seconds. Must be <= MAX_PAUSE_DURATION.
+    /// @param _minCheckInWindow Minimum check-in window in seconds. Must be <= MAX_CHECK_IN_WINDOW.
     /// @param _pauseDuration Initial pause duration in seconds.
     /// @param _checkInWindow Initial check-in window in seconds.
     constructor(
         address _admin,
+        uint256 _minPauseDuration,
+        uint256 _minCheckInWindow,
         uint256 _pauseDuration,
         uint256 _checkInWindow
     ) {
         require(_admin != address(0), ZeroAdmin());
         require(_admin != address(this), SelfAdmin());
+        require(_minPauseDuration != 0, ZeroMinPauseDuration());
+        require(_minPauseDuration <= MAX_PAUSE_DURATION, MinPauseDurationTooHigh());
+        require(_minCheckInWindow != 0, ZeroMinCheckInWindow());
+        require(_minCheckInWindow <= MAX_CHECK_IN_WINDOW, MinCheckInWindowTooHigh());
 
         ADMIN = _admin;
         emit AdminSet(_admin);
+
+        MIN_PAUSE_DURATION = _minPauseDuration;
+        MIN_CHECK_IN_WINDOW = _minCheckInWindow;
 
         _setPauseDuration(_pauseDuration);
         _setCheckInWindow(_checkInWindow);
