@@ -98,6 +98,10 @@ contract CircuitBreaker {
     error SelfAdmin();
     error ZeroPausable();
     error ZeroPauser();
+    error ZeroMinPauseDuration();
+    error MinPauseDurationTooHigh();
+    error ZeroMinCheckInWindow();
+    error MinCheckInWindowTooHigh();
     error PauseDurationOutOfRange();
     error SamePauseDuration();
     error CheckInWindowOutOfRange();
@@ -123,11 +127,6 @@ contract CircuitBreaker {
         _;
     }
 
-    error ZeroMinPauseDuration();
-    error MinPauseDurationTooHigh();
-    error ZeroMinCheckInWindow();
-    error MinCheckInWindowTooHigh();
-
     /// @param _admin Address that can assign pausers, set the pause duration, and set the check-in window.
     /// @param _minPauseDuration Minimum pause duration in seconds. Must be <= MAX_PAUSE_DURATION.
     /// @param _minCheckInWindow Minimum check-in window in seconds. Must be <= MAX_CHECK_IN_WINDOW.
@@ -143,9 +142,15 @@ contract CircuitBreaker {
         require(_admin != address(0), ZeroAdmin());
         require(_admin != address(this), SelfAdmin());
         require(_minPauseDuration != 0, ZeroMinPauseDuration());
-        require(_minPauseDuration <= MAX_PAUSE_DURATION, MinPauseDurationTooHigh());
+        require(
+            _minPauseDuration <= MAX_PAUSE_DURATION,
+            MinPauseDurationTooHigh()
+        );
         require(_minCheckInWindow != 0, ZeroMinCheckInWindow());
-        require(_minCheckInWindow <= MAX_CHECK_IN_WINDOW, MinCheckInWindowTooHigh());
+        require(
+            _minCheckInWindow <= MAX_CHECK_IN_WINDOW,
+            MinCheckInWindowTooHigh()
+        );
 
         ADMIN = _admin;
         emit AdminSet(_admin);
@@ -211,7 +216,9 @@ contract CircuitBreaker {
     ///         for monitoring.
     /// @param  _pausable Any pausable the caller is registered as pauser for.
     /// @return assignedPauser The pauser address assigned to the pausable.
-    function checkIn(address _pausable) public returns (address assignedPauser) {
+    function checkIn(
+        address _pausable
+    ) public returns (address assignedPauser) {
         assignedPauser = pauser[_pausable];
         require(
             msg.sender == assignedPauser,
