@@ -99,7 +99,9 @@ contract CircuitBreaker {
     error ZeroPausable();
     error ZeroPauser();
     error PauseDurationOutOfRange();
+    error SamePauseDuration();
     error CheckInWindowOutOfRange();
+    error SameCheckInWindow();
     error CheckInExpired();
     error SenderNotAdmin();
     error SenderNotPauser(address pausable, address pauser);
@@ -228,6 +230,7 @@ contract CircuitBreaker {
 
     /// @dev Validates and sets the global pause duration.
     function _setPauseDuration(uint256 _pauseDuration) internal {
+        require(_pauseDuration != pauseDuration, SamePauseDuration());
         require(
             _pauseDuration >= MIN_PAUSE_DURATION &&
                 _pauseDuration <= MAX_PAUSE_DURATION,
@@ -242,6 +245,7 @@ contract CircuitBreaker {
 
     /// @dev Validates and sets the check-in window duration.
     function _setCheckInWindow(uint256 _checkInWindow) internal {
+        require(_checkInWindow != checkInWindow, SameCheckInWindow());
         require(
             _checkInWindow >= MIN_CHECK_IN_WINDOW &&
                 _checkInWindow <= MAX_CHECK_IN_WINDOW,
