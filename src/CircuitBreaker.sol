@@ -89,6 +89,7 @@ contract CircuitBreaker {
     error CheckInExpired();
     error SenderNotAdmin();
     error SenderNotPauser(address pausable, address pauser);
+    error PauseFailed();
 
     modifier onlyAdmin() {
         require(msg.sender == admin, SenderNotAdmin());
@@ -196,7 +197,7 @@ contract CircuitBreaker {
 
         delete pauser[_pausable];
         _iPausable.pauseFor(_pauseDuration);
-        assert(_iPausable.isPaused());
+        require(_iPausable.isPaused(), PauseFailed());
 
         emit Paused(_pausable, _pauser, _pauseDuration);
     }
