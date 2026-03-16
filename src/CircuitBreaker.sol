@@ -78,7 +78,7 @@ contract CircuitBreaker {
     event PauserSet(address indexed pausable, address indexed pauser, address indexed previousPauser);
     event PauserRemoved(address indexed pausable, address indexed pauser);
     event Paused(address indexed pausable, address indexed pauser, uint256 pauseDuration);
-    event PauserCheckedIn(address indexed pauser);
+    event CheckIn(address indexed pauser);
 
     error ZeroAdmin();
     error AdminIsSelf();
@@ -128,7 +128,7 @@ contract CircuitBreaker {
 
     /// @notice Assign or replace a pauser for a pausable contract.
     ///         Only 1 pauser per pausable, the previous pauser will be overwritten.
-    ///         The new pauser must check in themselves before they can pause.
+    ///         The pauser's check-in is set to the current timestamp on assignment.
     /// @param  _pausable Pausable contract to assign a pauser to.
     /// @param  _pauser Pauser address to assign to the pausable. Must be non-zero.
     /// @dev    Function does not check whether CircuitBreaker has the permission to pause.
@@ -139,6 +139,8 @@ contract CircuitBreaker {
         address previousPauser = pauser[_pausable];
         pauser[_pausable] = _pauser;
         emit PauserSet(_pausable, _pauser, previousPauser);
+        
+        _checkIn(_pauser);
     }
 
     /// @notice Remove the pauser for a pausable contract.
@@ -166,14 +168,9 @@ contract CircuitBreaker {
     /// @param  _pausable Any pausable the caller is registered as pauser for.
     function checkIn(address _pausable) public {
         require(msg.sender == pauser[_pausable], SenderNotPauser(_pausable, pauser[_pausable]));
+        require(block.timestamp <= latestCheckIn[msg.sender] + checkInWindow, CheckInExpired());
 
-        uint256 _latestCheckIn = latestCheckIn[msg.sender];
-        if (_latestCheckIn != 0) {
-            require(block.timestamp <= _latestCheckIn + checkInWindow, CheckInExpired());
-        }
-
-        latestCheckIn[msg.sender] = block.timestamp;
-        emit PauserCheckedIn(msg.sender);
+        _checkIn(msg.sender);
     }
 
     /// @notice Returns whether a pauser's check-in is valid (not expired).
@@ -226,6 +223,12 @@ contract CircuitBreaker {
         pauseDuration = _pauseDuration;
 
         emit PauseDurationSet(previousPauseDuration, _pauseDuration);
+    }
+
+    /// @dev Records a check-in for the given pauser.
+    function _checkIn(address _pauser) internal {
+        latestCheckIn[_pauser] = block.timestamp;
+        emit CheckIn(_pauser);
     }
 
     /// @dev Validates and sets the check-in window duration.
