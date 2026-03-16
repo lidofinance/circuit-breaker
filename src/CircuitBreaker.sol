@@ -55,7 +55,7 @@ contract CircuitBreaker {
 
     /// @notice Admin address that can assign pausers, set the pause duration, and set the check-in window.
     ///         Assumed to be DAO Agent or other DAO-controlled executor.
-    address public admin;
+    address public immutable ADMIN;
 
     /// @notice Duration in seconds passed to pauseFor() on trigger. Applies to all pausables.
     ///         Controlled by the admin.
@@ -81,7 +81,7 @@ contract CircuitBreaker {
     event CheckIn(address indexed pauser);
 
     error ZeroAdmin();
-    error AdminIsSelf();
+    error SelfAdmin();
     error ZeroPausable();
     error ZeroPauser();
     error PauseDurationOutOfRange();
@@ -92,15 +92,20 @@ contract CircuitBreaker {
     error PauseFailed();
 
     modifier onlyAdmin() {
-        require(msg.sender == admin, SenderNotAdmin());
+        require(msg.sender == ADMIN, SenderNotAdmin());
         _;
     }
 
     /// @param _admin Address that can assign pausers, set the pause duration, and set the check-in window.
-    /// @param _pauseDuration Initial duration in seconds passed to pauseFor() on trigger. Must be within [MIN_PAUSE_DURATION, MAX_PAUSE_DURATION].
+    /// @param _pauseDuration Initial pause duration in seconds.
     /// @param _checkInWindow Initial check-in window in seconds.
     constructor(address _admin, uint256 _pauseDuration, uint256 _checkInWindow) {
-        _setAdmin(_admin);
+        require(_admin != address(0), ZeroAdmin());
+        require(_admin != address(this), SelfAdmin());
+
+        ADMIN = _admin;
+        emit AdminSet(_admin);
+
         _setPauseDuration(_pauseDuration);
         _setCheckInWindow(_checkInWindow);
     }
@@ -108,12 +113,6 @@ contract CircuitBreaker {
     // =========================================================================
     // Admin functions
     // =========================================================================
-
-    /// @notice Transfer admin role to a new address.
-    /// @param  _newAdmin New admin address. Must be non-zero.
-    function setAdmin(address _newAdmin) external onlyAdmin {
-        _setAdmin(_newAdmin);
-    }
 
     /// @notice Set the global pause duration applied to all pausables on trigger.
     /// @param  _pauseDuration Duration in seconds. Must be within [MIN_PAUSE_DURATION, MAX_PAUSE_DURATION].
@@ -205,16 +204,6 @@ contract CircuitBreaker {
     // =========================================================================
     // Internal helpers
     // =========================================================================
-
-    /// @dev Validates and sets the admin address.
-    function _setAdmin(address _newAdmin) internal {
-        require(_newAdmin != address(0), ZeroAdmin());
-        require(_newAdmin != address(this), AdminIsSelf());
-
-        admin = _newAdmin;
-
-        emit AdminSet(_newAdmin);
-    }
 
     /// @dev Validates and sets the global pause duration.
     function _setPauseDuration(uint256 _pauseDuration) internal {
