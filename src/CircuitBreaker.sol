@@ -20,21 +20,23 @@ interface IPausable {
 ///         the DAO delegate pause authority to designated pausers that can act instantly.
 ///
 ///         Design:
-///         - Immutable admin for robustness.
+///         - Immutable admin to avoid ownership exploits/mistakes.
 ///         - One pauser per pausable for clear accountability.
-///         - Single-use pause reducing trust surface.
+///         - Single-use pause minimizes damage if pauser is compromised.
 ///         - Same pause duration for all contracts for simplicity.
 ///         - Periodic heartbeat required to pause. A committee that cannot prove liveness
 ///           should not be trusted to respond in an emergency.
 ///
 ///         Assumptions:
-///         - Admin is a DAO agent or equivalent executor.
-///         - Admin is never malicious but can make mistakes.
+///         - Admin is a DAO agent or other DAO-authorized executor.
+///         - Admin is always honest.
+///         - Admin can make mistakes.
 ///         - Pausable implements IPausable.
 ///         - Pausable is a trusted contract upon assignment.
-///         - Pausable can later be exploited.
+///         - Pausable can become malicious later.
 ///         - Pauser is a DAO-approved multisig committee upon assignment.
-///         - Pauser can later be compromised, lose access, or become malicious.
+///         - Pauser can become malicious later.
+///         - Pauser can lose access to keys later.
 ///         - Pauser can make mistakes.
 ///         - CircuitBreaker has necessary pause roles upon trigger.
 contract CircuitBreaker {
@@ -42,29 +44,34 @@ contract CircuitBreaker {
     // Immutables
     // =========================================================================
 
-    /// @notice Admin address. Immutable. Set once in the constructor.
+    /// @notice Admin address.
+    ///         Assumed to be a DAO agent or other DAO-authorized executor
     address public immutable ADMIN;
 
-    /// @notice Lower bound for pauseDuration. Inclusive.
+    /// @notice Inclusive lower bound for pauseDuration in seconds.
+    ///         Configurable for different networks.
     uint256 public immutable MIN_PAUSE_DURATION;
 
-    /// @notice Upper bound for pauseDuration. Inclusive.
+    /// @notice Inclusive upper bound for pauseDuration in seconds.
+    ///         Configurable for different networks.
     uint256 public immutable MAX_PAUSE_DURATION;
 
-    /// @notice Lower bound for heartbeatInterval. Inclusive.
+    /// @notice Inclusive lower bound for heartbeatInterval in seconds.
+    ///         Configurable for different networks.
     uint256 public immutable MIN_HEARTBEAT_INTERVAL;
 
-    /// @notice Upper bound for heartbeatInterval. Inclusive.
+    /// @notice Inclusive upper bound for heartbeatInterval in seconds.
+    ///         Configurable for different networks.
     uint256 public immutable MAX_HEARTBEAT_INTERVAL;
 
     // =========================================================================
     // State variables
     // =========================================================================
 
-    /// @notice Duration in seconds of the pause applied to a pausable on trigger.
+    /// @notice Duration in seconds of the pause applied to the pausable on trigger.
     uint256 public pauseDuration;
 
-    /// @notice Duration in seconds within which a pauser must prove their liveness.
+    /// @notice Timeframe in seconds since latestHeartbeat within which a pauser is considered active.
     uint256 public heartbeatInterval;
 
     /// @notice Per-pausable pauser address.
@@ -144,13 +151,13 @@ contract CircuitBreaker {
     // Constructor
     // =========================================================================
 
-    /// @param _admin                Admin address. Non-zero, non-self.
-    /// @param _minPauseDuration      Lower bound for pause duration. Non-zero, <= _maxPauseDuration.
-    /// @param _maxPauseDuration      Upper bound for pause duration. Non-zero.
-    /// @param _minHeartbeatInterval  Lower bound for heartbeat interval. Non-zero, <= _maxHeartbeatInterval.
-    /// @param _maxHeartbeatInterval  Upper bound for heartbeat interval. Non-zero.
-    /// @param _pauseDuration         Initial pause duration. Within [_minPauseDuration, _maxPauseDuration].
-    /// @param _heartbeatInterval     Initial heartbeat interval. Within [_minHeartbeatInterval, _maxHeartbeatInterval].
+    /// @param _admin                 Admin address.
+    /// @param _minPauseDuration      Lower bound for pause duration.
+    /// @param _maxPauseDuration      Upper bound for pause duration.
+    /// @param _minHeartbeatInterval  Lower bound for heartbeat interval.
+    /// @param _maxHeartbeatInterval  Upper bound for heartbeat interval.
+    /// @param _pauseDuration         Initial pause duration.
+    /// @param _heartbeatInterval     Initial heartbeat interval.
     constructor(
         address _admin,
         uint256 _minPauseDuration,
@@ -186,7 +193,7 @@ contract CircuitBreaker {
     // View functions
     // =========================================================================
 
-    /// @notice Return whether a pauser has heartbeat within the interval.
+    /// @notice Return whether a pauser can pause or heartbeat at the moment.
     /// @param  _pauser Pauser address.
     function isPauserActive(address _pauser) public view returns (bool) {
         return block.timestamp <= latestHeartbeat[_pauser] + heartbeatInterval;
@@ -196,30 +203,27 @@ contract CircuitBreaker {
     // Admin functions
     // =========================================================================
 
-    /// @notice Set the pause duration applied to all pausables on trigger.
-    /// @param  _pauseDuration New duration in seconds. Within [MIN_PAUSE_DURATION, MAX_PAUSE_DURATION].
+    /// @notice Set the pause duration applied on pause.
+    /// @param  _pauseDuration New duration in seconds.
     function setPauseDuration(uint256 _pauseDuration) external onlyAdmin {
         require(_pauseDuration != pauseDuration, PauseDurationUnchanged());
         _setPauseDuration(_pauseDuration);
     }
 
-    /// @notice Set the heartbeat interval pausers must maintain to remain eligible.
-    /// @param  _heartbeatInterval New interval in seconds. Within [MIN_HEARTBEAT_INTERVAL, MAX_HEARTBEAT_INTERVAL].
+    /// @notice Set the heartbeat interval pausers must maintain to remain active.
+    /// @param  _heartbeatInterval New interval in seconds.
     function setHeartbeatInterval(uint256 _heartbeatInterval) external onlyAdmin {
         require(_heartbeatInterval != heartbeatInterval, HeartbeatIntervalUnchanged());
         _setHeartbeatInterval(_heartbeatInterval);
     }
 
     /// @notice Assign, replace, or remove a pauser for a pausable.
-    ///         - One pauser per pausable. Previous pauser is overwritten.
-    ///         - Heartbeat set to now on assignment. Admin must verify liveness externally.
-    ///         - Pass address(0) to remove the pauser.
+    ///         - Previous pauser will be overwritten.
+    ///         - Heartbeat updated on assignment.
     /// @param  _pausable Pausable contract address.
     /// @param  _pauser New pauser address. Zero removes the pauser.
     /// @dev    Does not verify CircuitBreaker has pause permission on the pausable.
-    ///         Re-assigning the same pauser is permitted and refreshes their heartbeat.
-    ///         Removal is combined with assignment to prevent a front-running attack
-    ///         where the pauser triggers between separate remove and assign calls.
+    ///         Does not verify pausable implements the correct interface.
     function setPauser(address _pausable, address _pauser) external onlyAdmin {
         _setPauser(_pausable, _pauser);
         
@@ -230,19 +234,20 @@ contract CircuitBreaker {
     // Pauser functions
     // =========================================================================
 
-    /// @notice Record a liveness proof. Maintains eligibility to pause.
-    ///         Also called by pause() before triggering.
+    /// @notice Record a liveness proof to remain authorized to pause.
     /// @param  _pausable Pausable the caller is assigned to.
-    /// @dev    Requires pausable for auth lookup, preventing unassigned callers.
+    /// @dev    Requires pausable only for auth lookup, preventing unassigned callers.
     function heartbeat(address _pausable) public {
-        address assignedPauser = getPauser[_pausable];
-        require(msg.sender == assignedPauser, SenderNotPauser());
+        require(msg.sender == getPauser[_pausable], SenderNotPauser());
         require(isPauserActive(msg.sender), HeartbeatFlatlined());
 
         _updateHeartbeat(msg.sender);
     }
 
     /// @notice Pause a pausable contract.
+    ///         - Updated heartbeat.
+    ///         - Assumes pausable implements the correct interface.
+    ///         - Assumes CircuitBreaker has the pause role for the pausable.
     /// @param  _pausable Pausable contract to pause.
     function pause(address _pausable) external nonReentrant {
         heartbeat(_pausable);
