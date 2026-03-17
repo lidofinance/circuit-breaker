@@ -2,164 +2,296 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.34;
 
+/// @title  IPausable
+/// @notice Interface pausable contracts must implement for CircuitBreaker compatibility.
 interface IPausable {
+    /// @notice Whether the contract is currently paused.
     function isPaused() external view returns (bool);
+
+    /// @notice Pause the contract for a given duration.
+    /// @param  _duration Duration in seconds.
     function pauseFor(uint256 _duration) external;
 }
 
 /// @title  CircuitBreaker
 /// @author Lido
-/// @notice An emergency pauser contract activated by designated committees.
+/// @notice Instantly pauses contracts in an emergency without a DAO vote.
+/// @dev    DAO votes are too slow to respond to active exploits. This contract lets
+///         the DAO delegate pause authority to designated pausers that can act instantly.
 ///
-///         Problem:
-///         In an emergency situation such as an ongoing exploit, the DAO cannot respond
-///         quickly due to the vote duration.
+///         Design:
+///         - Immutable admin for robustness.
+///         - One pauser per pausable for clear accountability.
+///         - Single-use pause reducing trust surface.
+///         - Same pause duration for all contracts for simplicity.
+///         - Periodic heartbeat required to pause. A committee that cannot prove liveness
+///           should not be trusted to respond in an emergency.
 ///
-///         Solution:
-///         A contract that holds pause permissions for critical contracts activated by
-///         designated pauser committees. These pausers serve as fast-response delegates for the DAO.
-///
-///         Pauser can only pause a contract once and must be assigned again by the admin (DAO).
-///         This limits the trust exposure of delegating pause power to a multisig.
-///
-///         Each pausable contract has one pauser but a pauser can have multiple pausables.
-///         Each pausable has its own pause duration set by the admin when assigning a pauser.
-///         The pause duration is cleared together with the pauser on use; the admin must re-assign.
-///
-///         The heartbeat mechanism records pauser's liveness for offchain monitoring in order
-///         to surface potentially unresponsive committees (e.g. due to lost keys) to make
-///         sure that in case of emergency the committee is ready to pause.
-///
-/// @dev    Design decisions:
-///         - One pauser per pausable. Keeps accountability clear and simple.
-///         - Single-use pause. The pauser mapping is deleted on use.
-///         - Per-pausable pause duration. Set at pauser assignment, cleared together with pauser on use.
-///         - Heartbeat signal for offchain only.
-///         - No pauser list. Offchain tracks the list of pausers.
-///
-///         Implicit assumptions:
-///         - Pausables implement IPausable interface.
-///         - Pausers are multisigs.
-///         - Admin is DAO Agent or other DAO-controlled executor.
+///         Assumptions:
+///         - Admin is a DAO agent or equivalent executor.
+///         - Admin is never malicious but can make mistakes.
+///         - Pausable implements IPausable.
+///         - Pausable is a trusted contract upon assignment.
+///         - Pausable can later be exploited.
+///         - Pauser is a DAO-approved multisig committee upon assignment.
+///         - Pauser can later be compromised, lose access, or become malicious.
+///         - Pauser can make mistakes.
+///         - CircuitBreaker has necessary pause roles upon trigger.
 contract CircuitBreaker {
-    /// @notice Pauser and pause duration for a pausable contract.
-    ///         address (20 bytes) + uint64 (8 bytes) pack into one 32-byte storage slot.
-    struct PauseConfig {
-        address pauser;
-        uint64 duration;
-    }
+    // =========================================================================
+    // Immutables
+    // =========================================================================
 
-    error ZeroAdmin();
-    error ZeroPauseDuration();
-    error ZeroPausable();
-    error ZeroPauser();
-    error DurationTooLarge();
-    error SenderNotAdmin();
-    error SenderNotPauser(address pausable, address pauser);
-    error PauseFailed(address pausable);
-
-    event AdminSet(address indexed admin);
-    event PauserSet(address indexed pausable, address indexed pauser, uint256 pauseDuration);
-    event PauserRemoved(address indexed pausable);
-    event Paused(address indexed pausable);
-    event AlreadyPaused(address indexed pausable);
-    event Heartbeat(address indexed sender);
-
-    /// @notice Admin address that can assign pausers and set pause duration.
-    ///         Assumed to be DAO Agent or other DAO-controlled executor.
+    /// @notice Admin address. Immutable. Set once in the constructor.
     address public immutable ADMIN;
 
-    /// @notice Per-pausable pauser and pause duration, packed into one storage slot.
-    ///         Entry is deleted upon successful use.
-    mapping(address pausable => PauseConfig) public pauserConfigs;
+    /// @notice Lower bound for pauseDuration. Inclusive.
+    uint256 public immutable MIN_PAUSE_DURATION;
 
-    /// @notice Last timestamp each pauser proved liveness.
-    ///         For offchain monitoring only.
-    mapping(address pauser => uint256 latestHeartbeat) public latestHeartbeats;
+    /// @notice Upper bound for pauseDuration. Inclusive.
+    uint256 public immutable MAX_PAUSE_DURATION;
 
-    /// @param _admin Address that can assign pausers and set pause duration.
-    constructor(address _admin) {
-        require(_admin != address(0), ZeroAdmin());
+    /// @notice Lower bound for heartbeatInterval. Inclusive.
+    uint256 public immutable MIN_HEARTBEAT_INTERVAL;
+
+    /// @notice Upper bound for heartbeatInterval. Inclusive.
+    uint256 public immutable MAX_HEARTBEAT_INTERVAL;
+
+    // =========================================================================
+    // State variables
+    // =========================================================================
+
+    /// @notice Duration in seconds of the pause applied to a pausable on trigger.
+    uint256 public pauseDuration;
+
+    /// @notice Duration in seconds within which a pauser must prove their liveness.
+    uint256 public heartbeatInterval;
+
+    /// @notice Per-pausable pauser address.
+    mapping(address pausable => address pauser) public getPauser;
+
+    /// @notice Timestamp of a pauser's most recent liveness proof.
+    mapping(address pauser => uint256 timestamp) public latestHeartbeat;
+
+    /// @dev Cross-pausable reentrancy guard.
+    bool transient lock;
+
+    // =========================================================================
+    // Events
+    // =========================================================================
+
+    event CircuitBreakerInitialized(
+        address indexed admin,
+        uint256 minPauseDuration,
+        uint256 maxPauseDuration,
+        uint256 minHeartbeatInterval,
+        uint256 maxHeartbeatInterval
+    );
+
+    event PauserSet(address indexed pausable, address indexed previousPauser, address indexed pauser);
+    event PauseDurationUpdated(uint256 previousPauseDuration, uint256 pauseDuration);
+    event HeartbeatIntervalUpdated(uint256 previousHeartbeatInterval, uint256 heartbeatInterval);
+    event HeartbeatUpdated(address indexed pauser);
+    event PauseTriggered(address indexed pausable, address indexed pauser, uint256 pauseDuration);
+
+    // =========================================================================
+    // Errors
+    // =========================================================================
+
+    error AdminIsZero();
+
+    error MinPauseDurationIsZero();
+    error MaxPauseDurationIsZero();
+    error MinPauseDurationExceedsMax();
+
+    error MinHeartbeatIntervalIsZero();
+    error MaxHeartbeatIntervalIsZero();
+    error MinHeartbeatIntervalExceedsMax();
+
+    error PauseDurationBelowMin();
+    error PauseDurationAboveMax();
+    error PauseDurationUnchanged();
+
+    error HeartbeatIntervalBelowMin();
+    error HeartbeatIntervalAboveMax();
+    error HeartbeatIntervalUnchanged();
+
+    error PausableIsZero();
+    error SenderNotAdmin();
+    error SenderNotPauser();
+
+    error HeartbeatFlatlined();
+    error PauseFailed();
+    error ReentrantCall();
+
+    // =========================================================================
+    // Modifiers
+    // =========================================================================
+
+    modifier nonReentrant() {
+        require(!lock, ReentrantCall());
+        lock = true;
+        _;
+        lock = false;
+    }
+
+    modifier onlyAdmin() {
+        require(msg.sender == ADMIN, SenderNotAdmin());
+        _;
+    }
+
+    // =========================================================================
+    // Constructor
+    // =========================================================================
+
+    /// @param _admin                Admin address. Non-zero, non-self.
+    /// @param _minPauseDuration      Lower bound for pause duration. Non-zero, <= _maxPauseDuration.
+    /// @param _maxPauseDuration      Upper bound for pause duration. Non-zero.
+    /// @param _minHeartbeatInterval  Lower bound for heartbeat interval. Non-zero, <= _maxHeartbeatInterval.
+    /// @param _maxHeartbeatInterval  Upper bound for heartbeat interval. Non-zero.
+    /// @param _pauseDuration         Initial pause duration. Within [_minPauseDuration, _maxPauseDuration].
+    /// @param _heartbeatInterval     Initial heartbeat interval. Within [_minHeartbeatInterval, _maxHeartbeatInterval].
+    constructor(
+        address _admin,
+        uint256 _minPauseDuration,
+        uint256 _maxPauseDuration,
+        uint256 _minHeartbeatInterval,
+        uint256 _maxHeartbeatInterval,
+        uint256 _pauseDuration,
+        uint256 _heartbeatInterval
+    ) {
+        require(_admin != address(0), AdminIsZero());
+        require(_minPauseDuration != 0, MinPauseDurationIsZero());
+        require(_maxPauseDuration != 0, MaxPauseDurationIsZero());
+        require(_minPauseDuration <= _maxPauseDuration, MinPauseDurationExceedsMax());
+        require(_minHeartbeatInterval != 0, MinHeartbeatIntervalIsZero());
+        require(_maxHeartbeatInterval != 0, MaxHeartbeatIntervalIsZero());
+        require(_minHeartbeatInterval <= _maxHeartbeatInterval, MinHeartbeatIntervalExceedsMax());
 
         ADMIN = _admin;
+        MIN_PAUSE_DURATION = _minPauseDuration;
+        MAX_PAUSE_DURATION = _maxPauseDuration;
+        MIN_HEARTBEAT_INTERVAL = _minHeartbeatInterval;
+        MAX_HEARTBEAT_INTERVAL = _maxHeartbeatInterval;
 
-        emit AdminSet(_admin);
+        emit CircuitBreakerInitialized(
+            _admin, _minPauseDuration, _maxPauseDuration, _minHeartbeatInterval, _maxHeartbeatInterval
+        );
+
+        _setPauseDuration(_pauseDuration);
+        _setHeartbeatInterval(_heartbeatInterval);
     }
 
-    /// @notice Assign or replace a pauser for a pausable contract.
-    ///         Only 1 pauser per pausable, the previous pauser will be overwritten.
-    /// @param  _pausable Pausable contract to assign a pauser to.
-    /// @param  _pauser Pauser address to assign to the pausable. Must be non-zero.
-    /// @param  _pauseDuration Duration in seconds passed to pauseFor() on trigger. Must be non-zero.
-    /// @dev    Function does not check whether CircuitBreaker has the permission to pause.
-    function setPauser(address _pausable, address _pauser, uint256 _pauseDuration) external {
-        require(msg.sender == ADMIN, SenderNotAdmin());
-        require(_pausable != address(0), ZeroPausable());
-        require(_pauser != address(0), ZeroPauser());
-        require(_pauseDuration > 0, ZeroPauseDuration());
-        require(_pauseDuration <= type(uint64).max, DurationTooLarge());
+    // =========================================================================
+    // View functions
+    // =========================================================================
 
-        pauserConfigs[_pausable] = PauseConfig(_pauser, uint64(_pauseDuration));
-
-        emit PauserSet(_pausable, _pauser, _pauseDuration);
+    /// @notice Return whether a pauser has heartbeat within the interval.
+    /// @param  _pauser Pauser address.
+    function isPauserActive(address _pauser) public view returns (bool) {
+        return block.timestamp <= latestHeartbeat[_pauser] + heartbeatInterval;
     }
 
-    /// @notice Remove the pauser for a pausable contract and clear its pause duration.
-    /// @param  _pausable Pausable contract to remove the pauser from.
-    function removePauser(address _pausable) external {
-        require(msg.sender == ADMIN, SenderNotAdmin());
-        require(_pausable != address(0), ZeroPausable());
-        require(pauserConfigs[_pausable].pauser != address(0), ZeroPauser());
+    // =========================================================================
+    // Admin functions
+    // =========================================================================
 
-        delete pauserConfigs[_pausable];
-
-        emit PauserRemoved(_pausable);
+    /// @notice Set the pause duration applied to all pausables on trigger.
+    /// @param  _pauseDuration New duration in seconds. Within [MIN_PAUSE_DURATION, MAX_PAUSE_DURATION].
+    function setPauseDuration(uint256 _pauseDuration) external onlyAdmin {
+        require(_pauseDuration != pauseDuration, PauseDurationUnchanged());
+        _setPauseDuration(_pauseDuration);
     }
 
-    /// @notice Record a liveness proof. Called automatically by pause(), but pausers
-    ///         can also call it independently to signal they're alive.
-    ///         The pausable contract is passed as the parameter to perform auth check
-    ///         to prevent strangers from calling this function and creating noise
-    ///         for monitoring.
-    /// @param  _pausable Any pausable the caller is registered as pauser for.
-    function heartbeat(address _pausable) external {
-        PauseConfig memory config = pauserConfigs[_pausable];
-        require(msg.sender == config.pauser, SenderNotPauser(_pausable, config.pauser));
+    /// @notice Set the heartbeat interval pausers must maintain to remain eligible.
+    /// @param  _heartbeatInterval New interval in seconds. Within [MIN_HEARTBEAT_INTERVAL, MAX_HEARTBEAT_INTERVAL].
+    function setHeartbeatInterval(uint256 _heartbeatInterval) external onlyAdmin {
+        require(_heartbeatInterval != heartbeatInterval, HeartbeatIntervalUnchanged());
+        _setHeartbeatInterval(_heartbeatInterval);
+    }
+
+    /// @notice Assign, replace, or remove a pauser for a pausable.
+    ///         - One pauser per pausable. Previous pauser is overwritten.
+    ///         - Heartbeat set to now on assignment. Admin must verify liveness externally.
+    ///         - Pass address(0) to remove the pauser.
+    /// @param  _pausable Pausable contract address.
+    /// @param  _pauser New pauser address. Zero removes the pauser.
+    /// @dev    Does not verify CircuitBreaker has pause permission on the pausable.
+    ///         Re-assigning the same pauser is permitted and refreshes their heartbeat.
+    ///         Removal is combined with assignment to prevent a front-running attack
+    ///         where the pauser triggers between separate remove and assign calls.
+    function setPauser(address _pausable, address _pauser) external onlyAdmin {
+        _setPauser(_pausable, _pauser);
         
-        _heartbeat();
+        if (_pauser != address(0)) _updateHeartbeat(_pauser);
+    }
+
+    // =========================================================================
+    // Pauser functions
+    // =========================================================================
+
+    /// @notice Record a liveness proof. Maintains eligibility to pause.
+    ///         Also called by pause() before triggering.
+    /// @param  _pausable Pausable the caller is assigned to.
+    /// @dev    Requires pausable for auth lookup, preventing unassigned callers.
+    function heartbeat(address _pausable) public {
+        address assignedPauser = getPauser[_pausable];
+        require(msg.sender == assignedPauser, SenderNotPauser());
+        require(isPauserActive(msg.sender), HeartbeatFlatlined());
+
+        _updateHeartbeat(msg.sender);
     }
 
     /// @notice Pause a pausable contract.
-    ///         CircuitBreaker must have the permission to pause the pausable.
-    ///         Caller must be the assigned pauser for the pausable.
-    ///         If the pausable is already paused, the call is a no-op (emits AlreadyPaused).
-    ///         If the pause is successful, the pauser cannot pause the same contract again
-    ///         without explicit re-assignment from the admin.
-    ///         Updates the caller's heartbeat timestamp.
-    ///         Batching can be done externally (e.g. multisig multi-send).
-    /// @param  _pausable Contract to pause.
-    function pause(address _pausable) external {
-        IPausable ipausable = IPausable(_pausable);
-        PauseConfig memory config = pauserConfigs[_pausable];
+    /// @param  _pausable Pausable contract to pause.
+    function pause(address _pausable) external nonReentrant {
+        heartbeat(_pausable);
 
-        require(msg.sender == config.pauser, SenderNotPauser(_pausable, config.pauser));
+        uint256 duration = pauseDuration;
+        IPausable pausable = IPausable(_pausable);
 
-        if (ipausable.isPaused()) {
-            emit AlreadyPaused(_pausable);
-        } else {
-            delete pauserConfigs[_pausable];
-            ipausable.pauseFor(config.duration);
-            require(ipausable.isPaused(), PauseFailed(_pausable));
-            emit Paused(_pausable);
-        }
+        _setPauser(_pausable, address(0));
+        pausable.pauseFor(duration);
+        require(pausable.isPaused(), PauseFailed());
 
-        _heartbeat();
+        emit PauseTriggered(_pausable, msg.sender, duration);
     }
 
-    /// @dev Records liveness without auth check. Used internally by pause() which already
-    ///      validates the caller is a registered pauser.
-    function _heartbeat() private {
-        latestHeartbeats[msg.sender] = block.timestamp;
-        emit Heartbeat(msg.sender);
+    // =========================================================================
+    // Internal functions
+    // =========================================================================
+
+    function _updateHeartbeat(address _pauser) internal {
+        latestHeartbeat[_pauser] = block.timestamp;
+        emit HeartbeatUpdated(_pauser);
+    }
+
+   function _setPauser(address _pausable, address _pauser) internal {
+        require(_pausable != address(0), PausableIsZero());
+
+        address previousPauser = getPauser[_pausable];
+        getPauser[_pausable] = _pauser;
+
+        emit PauserSet(_pausable, previousPauser, _pauser);
+    }
+
+    function _setPauseDuration(uint256 _pauseDuration) internal {
+        require(_pauseDuration >= MIN_PAUSE_DURATION, PauseDurationBelowMin());
+        require(_pauseDuration <= MAX_PAUSE_DURATION, PauseDurationAboveMax());
+
+        uint256 previousPauseDuration = pauseDuration;
+        pauseDuration = _pauseDuration;
+
+        emit PauseDurationUpdated(previousPauseDuration, _pauseDuration);
+    }
+
+    function _setHeartbeatInterval(uint256 _heartbeatInterval) internal {
+        require(_heartbeatInterval >= MIN_HEARTBEAT_INTERVAL, HeartbeatIntervalBelowMin());
+        require(_heartbeatInterval <= MAX_HEARTBEAT_INTERVAL, HeartbeatIntervalAboveMax());
+
+        uint256 previousHeartbeatInterval = heartbeatInterval;
+        heartbeatInterval = _heartbeatInterval;
+
+        emit HeartbeatIntervalUpdated(previousHeartbeatInterval, _heartbeatInterval);
     }
 }
