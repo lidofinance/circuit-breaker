@@ -6,7 +6,7 @@ pragma solidity 0.8.34;
 /// @notice Interface that pausable contracts must implement to be compatible with CircuitBreaker.
 interface IPausable {
     /// @notice Returns whether the contract is currently paused.
-    /// @return True if the contract is currently paused.
+    /// @return bool whether the contract is currently paused.
     function isPaused() external view returns (bool);
 
     /// @notice Pauses the contract for a given duration.
@@ -16,37 +16,28 @@ interface IPausable {
 
 /// @title  CircuitBreaker
 /// @author Lido
-/// @notice An emergency pauser contract activated by designated committees.
+/// @notice Instantly pauses contracts in an emergency without a DAO vote.
+/// @dev    DAO votes are too slow to respond to active exploits. This contract lets
+///         the DAO delegate pause authority to designated pausers that can act instantly.
 ///
-/// @dev    Problem:
-///         In an emergency situation such as an ongoing exploit, the DAO cannot respond
-///         quickly due to the vote duration.
+///         Design:
+///         - Immutable admin for robustness.
+///         - One pauser per pausable for clear accountability.
+///         - Single-use pause reducing trust surface.
+///         - Same pause duration for all contracts for simplicity.
+///         - Periodic check-in required to pause. A committee that cannot prove liveness
+///           should not be trusted to respond in an emergency.
 ///
-///         Solution:
-///         A contract that holds pause permissions for critical contracts activated by
-///         designated pauser committees. These pausers serve as fast-response delegates for the DAO.
-///
-///         Pauser can only pause a contract once and must be assigned again by the admin (DAO).
-///         This limits the trust exposure of delegating pause power to a multisig.
-///
-///         Each pausable contract has one pauser but a pauser can have multiple pausables.
-///         A global pause duration is controlled by the admin and applies to all pausables.
-///
-///         The check-in mechanism requires pausers to periodically prove liveness. A pauser
-///         whose check-in has expired cannot pause. This ensures
-///         that in case of emergency the committee is ready to respond.
-///
-///         Design decisions:
-///         - One pauser per pausable. Keeps accountability clear and simple.
-///         - Single-use pause. The pauser mapping is deleted on use.
-///         - Global pause duration. Controlled by admin, applies to all pausables.
-///         - Check-in gates pause. Pauser's check-in must not have expired.
-///         - No pauser list. Offchain tracks the list of pausers.
-///
-///         Implicit assumptions:
-///         - Pausables implement IPausable interface.
-///         - Pausers are multisigs.
-///         - Admin is DAO Agent or other DAO-controlled executor.
+///         Assumptions:
+///         - Admin is a DAO agent or equivalent executor.
+///         - Admin is never malicious but can make mistakes.
+///         - Pausable implements IPausable.
+///         - Pausable is a trusted contract upon assignment.
+///         - Pausable can later be exploited.
+///         - Pauser is a DAO-approved multisig committee upon assignment.
+///         - Pauser can later be compromised, lose access, or become malicious.
+///         - Pauser can make mistakes.
+///         - CircuitBreaker has necessary pause roles upon trigger.
 contract CircuitBreaker {
     // =========================================================================
     // Constants
