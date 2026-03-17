@@ -3,14 +3,13 @@
 pragma solidity 0.8.34;
 
 /// @title  IPausable
-/// @notice Interface that pausable contracts must implement to be compatible with CircuitBreaker.
+/// @notice Interface pausable contracts must implement for CircuitBreaker compatibility.
 interface IPausable {
-    /// @notice Returns whether the contract is currently paused.
-    /// @return bool whether the contract is currently paused.
+    /// @notice Whether the contract is currently paused.
     function isPaused() external view returns (bool);
 
-    /// @notice Pauses the contract for a given duration.
-    /// @param  _duration Pause duration in seconds.
+    /// @notice Pause the contract for a given duration.
+    /// @param  _duration Duration in seconds.
     function pauseFor(uint256 _duration) external;
 }
 
@@ -25,7 +24,7 @@ interface IPausable {
 ///         - One pauser per pausable for clear accountability.
 ///         - Single-use pause reducing trust surface.
 ///         - Same pause duration for all contracts for simplicity.
-///         - Periodic check-in required to pause. A committee that cannot prove liveness
+///         - Periodic heartbeat required to pause. A committee that cannot prove liveness
 ///           should not be trusted to respond in an emergency.
 ///
 ///         Assumptions:
@@ -40,82 +39,89 @@ interface IPausable {
 ///         - CircuitBreaker has necessary pause roles upon trigger.
 contract CircuitBreaker {
     // =========================================================================
-    // Constants
-    // =========================================================================
-
-    /// @notice Maximum pause duration that can be set by the admin.
-    uint256 public constant MAX_PAUSE_DURATION = 30 days;
-
-    /// @notice Maximum check-in window that can be set by the admin.
-    uint256 public constant MAX_CHECK_IN_WINDOW = 1095 days;
-
-    // =========================================================================
     // Immutables
     // =========================================================================
 
-    /// @notice Minimum pause duration that can be set by the admin.
+    /// @notice Admin address. Immutable. Set once in the constructor.
+    address public immutable ADMIN;
+
+    /// @notice Lower bound for pauseDuration. Inclusive.
     uint256 public immutable MIN_PAUSE_DURATION;
 
-    /// @notice Minimum check-in window that can be set by the admin.
-    uint256 public immutable MIN_CHECK_IN_WINDOW;
+    /// @notice Upper bound for pauseDuration. Inclusive.
+    uint256 public immutable MAX_PAUSE_DURATION;
 
-    /// @notice Admin address that can assign pausers, set the pause duration, and set the check-in window.
-    address public immutable ADMIN;
+    /// @notice Lower bound for heartbeatInterval. Inclusive.
+    uint256 public immutable MIN_HEARTBEAT_INTERVAL;
+
+    /// @notice Upper bound for heartbeatInterval. Inclusive.
+    uint256 public immutable MAX_HEARTBEAT_INTERVAL;
 
     // =========================================================================
     // State variables
     // =========================================================================
 
-    /// @notice Duration in seconds passed to pauseFor() on trigger. Applies to all pausables.
+    /// @notice Duration in seconds of the pause applied to a pausable on trigger.
     uint256 public pauseDuration;
 
-    /// @notice Duration in seconds within which a pauser must check in to remain eligible to pause.
-    uint256 public checkInWindow;
+    /// @notice Duration in seconds within which a pauser must prove their liveness.
+    uint256 public heartbeatInterval;
 
-    /// @notice Per-pausable pauser address. Entry is deleted upon successful use.
-    mapping(address pausable => address pauser) public pauserOf;
+    /// @notice Per-pausable pauser address.
+    mapping(address pausable => address pauser) public getPauser;
 
-    /// @notice Latest timestamp a pauser proved liveness.
-    mapping(address pauser => uint256 timestamp) public latestCheckIn;
+    /// @notice Timestamp of a pauser's most recent liveness proof.
+    mapping(address pauser => uint256 timestamp) public latestHeartbeat;
 
-    /// @dev Transient reentrancy lock.
-    bool transient _lock;
+    /// @dev Cross-pausable reentrancy guard.
+    bool transient lock;
 
     // =========================================================================
     // Events
     // =========================================================================
 
-    event AdminSet(address indexed admin);
+    event CircuitBreakerInitialized(
+        address indexed admin,
+        uint256 minPauseDuration,
+        uint256 maxPauseDuration,
+        uint256 minHeartbeatInterval,
+        uint256 maxHeartbeatInterval
+    );
 
-    event PauseDurationSet(uint256 previousPauseDuration, uint256 pauseDuration);
-    event CheckInWindowSet(uint256 previousCheckInWindow, uint256 checkInWindow);
-
-    event PauserSet(address indexed pausable, address indexed pauser, address indexed previousPauser);
-    event CheckedIn(address indexed pauser);
-
-    event Paused(address indexed pausable, address indexed pauser, uint256 pauseDuration);
+    event PauserSet(address indexed pausable, address indexed previousPauser, address indexed pauser);
+    event PauseDurationUpdated(uint256 previousPauseDuration, uint256 pauseDuration);
+    event HeartbeatIntervalUpdated(uint256 previousHeartbeatInterval, uint256 heartbeatInterval);
+    event HeartbeatUpdated(address indexed pauser);
+    event PauseTriggered(address indexed pausable, address indexed pauser, uint256 pauseDuration);
 
     // =========================================================================
     // Errors
     // =========================================================================
 
-    error ZeroAdmin();
-    error SelfAdmin();
-    error ZeroMinPauseDuration();
-    error MinPauseDurationTooHigh();
-    error ZeroMinCheckInWindow();
-    error MinCheckInWindowTooHigh();
+    error AdminIsZero();
+    error AdminIsSelf();
 
-    error PauseDurationOutOfRange();
-    error SamePauseDuration();
-    error CheckInWindowOutOfRange();
-    error SameCheckInWindow();
+    error MinPauseDurationIsZero();
+    error MaxPauseDurationIsZero();
+    error MinPauseDurationExceedsMax();
 
-    error ZeroPausable();
-    error SenderNotAdmin(address expectedAdmin);
-    error SenderNotPauser(address pausable, address assignedPauser);
+    error MinHeartbeatIntervalIsZero();
+    error MaxHeartbeatIntervalIsZero();
+    error MinHeartbeatIntervalExceedsMax();
 
-    error CheckInExpired();
+    error PauseDurationBelowMin();
+    error PauseDurationAboveMax();
+    error PauseDurationUnchanged();
+
+    error HeartbeatIntervalBelowMin();
+    error HeartbeatIntervalAboveMax();
+    error HeartbeatIntervalUnchanged();
+
+    error PausableIsZero();
+    error SenderNotAdmin();
+    error SenderNotPauser();
+
+    error HeartbeatFlatlined();
     error PauseFailed();
     error ReentrantCall();
 
@@ -124,14 +130,14 @@ contract CircuitBreaker {
     // =========================================================================
 
     modifier nonReentrant() {
-        require(!_lock, ReentrantCall());
-        _lock = true;
+        require(!lock, ReentrantCall());
+        lock = true;
         _;
-        _lock = false;
+        lock = false;
     }
 
     modifier onlyAdmin() {
-        require(msg.sender == ADMIN, SenderNotAdmin(ADMIN));
+        require(msg.sender == ADMIN, SenderNotAdmin());
         _;
     }
 
@@ -139,158 +145,155 @@ contract CircuitBreaker {
     // Constructor
     // =========================================================================
 
-    /// @param _admin Admin address. Must not be zero or self.
-    /// @param _minPauseDuration Minimum pause duration in seconds. Must be <= MAX_PAUSE_DURATION.
-    /// @param _minCheckInWindow Minimum check-in window in seconds. Must be <= MAX_CHECK_IN_WINDOW.
-    /// @param _pauseDuration Initial pause duration in seconds. Must be within [_minPauseDuration, MAX_PAUSE_DURATION].
-    /// @param _checkInWindow Initial check-in window in seconds. Must be within [_minCheckInWindow, MAX_CHECK_IN_WINDOW].
+    /// @param _admin                Admin address. Non-zero, non-self.
+    /// @param _minPauseDuration      Lower bound for pause duration. Non-zero, <= _maxPauseDuration.
+    /// @param _maxPauseDuration      Upper bound for pause duration. Non-zero.
+    /// @param _minHeartbeatInterval  Lower bound for heartbeat interval. Non-zero, <= _maxHeartbeatInterval.
+    /// @param _maxHeartbeatInterval  Upper bound for heartbeat interval. Non-zero.
+    /// @param _pauseDuration         Initial pause duration. Within [_minPauseDuration, _maxPauseDuration].
+    /// @param _heartbeatInterval     Initial heartbeat interval. Within [_minHeartbeatInterval, _maxHeartbeatInterval].
     constructor(
         address _admin,
         uint256 _minPauseDuration,
-        uint256 _minCheckInWindow,
+        uint256 _maxPauseDuration,
+        uint256 _minHeartbeatInterval,
+        uint256 _maxHeartbeatInterval,
         uint256 _pauseDuration,
-        uint256 _checkInWindow
+        uint256 _heartbeatInterval
     ) {
-        // --- Immutable configuration ---
-
-        require(_admin != address(0), ZeroAdmin());
-        require(_admin != address(this), SelfAdmin());
-        require(_minPauseDuration != 0, ZeroMinPauseDuration());
-        require(_minPauseDuration <= MAX_PAUSE_DURATION, MinPauseDurationTooHigh());
-        require(_minCheckInWindow != 0, ZeroMinCheckInWindow());
-        require(_minCheckInWindow <= MAX_CHECK_IN_WINDOW, MinCheckInWindowTooHigh());
+        require(_admin != address(0), AdminIsZero());
+        require(_admin != address(this), AdminIsSelf());
+        require(_minPauseDuration != 0, MinPauseDurationIsZero());
+        require(_maxPauseDuration != 0, MaxPauseDurationIsZero());
+        require(_minPauseDuration <= _maxPauseDuration, MinPauseDurationExceedsMax());
+        require(_minHeartbeatInterval != 0, MinHeartbeatIntervalIsZero());
+        require(_maxHeartbeatInterval != 0, MaxHeartbeatIntervalIsZero());
+        require(_minHeartbeatInterval <= _maxHeartbeatInterval, MinHeartbeatIntervalExceedsMax());
 
         ADMIN = _admin;
         MIN_PAUSE_DURATION = _minPauseDuration;
-        MIN_CHECK_IN_WINDOW = _minCheckInWindow;
+        MAX_PAUSE_DURATION = _maxPauseDuration;
+        MIN_HEARTBEAT_INTERVAL = _minHeartbeatInterval;
+        MAX_HEARTBEAT_INTERVAL = _maxHeartbeatInterval;
 
-        emit AdminSet(_admin);
-
-        // --- Initial mutable state ---
-
-        require(
-            _pauseDuration >= MIN_PAUSE_DURATION && _pauseDuration <= MAX_PAUSE_DURATION, PauseDurationOutOfRange()
-        );
-        require(
-            _checkInWindow >= MIN_CHECK_IN_WINDOW && _checkInWindow <= MAX_CHECK_IN_WINDOW, CheckInWindowOutOfRange()
+        emit CircuitBreakerInitialized(
+            _admin, _minPauseDuration, _maxPauseDuration, _minHeartbeatInterval, _maxHeartbeatInterval
         );
 
-        pauseDuration = _pauseDuration;
-        emit PauseDurationSet(0, _pauseDuration);
-
-        checkInWindow = _checkInWindow;
-        emit CheckInWindowSet(0, _checkInWindow);
-    }
-
-    // =========================================================================
-    // Admin functions
-    // =========================================================================
-
-    /// @notice Set the global pause duration applied to all pausables on trigger.
-    /// @param  _pauseDuration New pause duration in seconds. Must be within [MIN_PAUSE_DURATION, MAX_PAUSE_DURATION].
-    function setPauseDuration(uint256 _pauseDuration) external onlyAdmin {
-        uint256 previousPauseDuration = pauseDuration;
-        require(_pauseDuration != previousPauseDuration, SamePauseDuration());
-        require(
-            _pauseDuration >= MIN_PAUSE_DURATION && _pauseDuration <= MAX_PAUSE_DURATION, PauseDurationOutOfRange()
-        );
-
-        pauseDuration = _pauseDuration;
-
-        emit PauseDurationSet(previousPauseDuration, _pauseDuration);
-    }
-
-    /// @notice Set the check-in window. Pausers must check in within this window to remain eligible to pause.
-    /// @param  _checkInWindow New check-in window in seconds. Must be within [MIN_CHECK_IN_WINDOW, MAX_CHECK_IN_WINDOW].
-    function setCheckInWindow(uint256 _checkInWindow) external onlyAdmin {
-        uint256 previousCheckInWindow = checkInWindow;
-        require(_checkInWindow != previousCheckInWindow, SameCheckInWindow());
-        require(
-            _checkInWindow >= MIN_CHECK_IN_WINDOW && _checkInWindow <= MAX_CHECK_IN_WINDOW, CheckInWindowOutOfRange()
-        );
-
-        checkInWindow = _checkInWindow;
-
-        emit CheckInWindowSet(previousCheckInWindow, _checkInWindow);
-    }
-
-    /// @notice Assign, replace, or remove a pauser for a pausable contract.
-    ///         Only 1 pauser per pausable, the previous pauser will be overwritten.
-    ///         The pauser's check-in is set to the current timestamp on assignment,
-    ///         implying the admin must have confirmed the liveness
-    ///         of the assigned pauser outside of this contract. 
-    ///         Pass address(0) as _pauser to remove the pauser.
-    /// @param  _pausable Pausable contract address.
-    /// @param  _pauser New pauser address. Zero address removes the pauser.
-    /// @dev    Function does not check whether CircuitBreaker has the permission to pause.
-    ///         Re-assigning the same pauser is permitted and refreshes their check-in timestamp.
-    ///         Removal is combined with assignment to prevent a front-running attack where
-    ///         the pauser pauses the contract between a removePauser and setPauser call,
-    ///         causing the DAO vote enactment to revert.
-    function setPauser(address _pausable, address _pauser) external onlyAdmin {
-        require(_pausable != address(0), ZeroPausable());
-
-        address previousPauser = pauserOf[_pausable];
-        pauserOf[_pausable] = _pauser;
-
-        if (_pauser != address(0)) {
-            latestCheckIn[_pauser] = block.timestamp;
-            emit CheckedIn(_pauser);
-        }
-
-        emit PauserSet(_pausable, _pauser, previousPauser);
-    }
-
-    // =========================================================================
-    // Pauser functions
-    // =========================================================================
-
-    /// @notice Record a liveness proof. Called by pausers to maintain eligibility to pause.
-    ///         Also invoked by `pause()` before triggering the pause.
-    /// @param  _pausable Pausable contract the caller is registered as pauser for.
-    /// @dev    The pausable contract is passed as the parameter to perform auth check
-    ///         to prevent strangers from calling this function and creating noise
-    ///         for monitoring.
-    function checkIn(address _pausable) public {
-        address assignedPauser = pauserOf[_pausable];
-        require(msg.sender == assignedPauser, SenderNotPauser(_pausable, assignedPauser));
-        require(block.timestamp <= latestCheckIn[msg.sender] + checkInWindow, CheckInExpired());
-
-        latestCheckIn[msg.sender] = block.timestamp;
-        emit CheckedIn(msg.sender);
-    }
-
-    /// @notice Pause a pausable contract.
-    ///         CircuitBreaker must have the permission to pause the pausable.
-    ///         Caller must be the assigned pauser for the pausable.
-    ///         Caller's check-in must not have expired.
-    ///         The pauser cannot pause the same contract again without explicit
-    ///         re-assignment from the admin.
-    ///         Batching can be done externally (e.g. multisig multi-send).
-    /// @param  _pausable Pausable contract to pause.
-    function pause(address _pausable) external nonReentrant {
-        checkIn(_pausable);
-
-        uint256 duration = pauseDuration;
-        IPausable pausable = IPausable(_pausable);
-
-        pausable.pauseFor(duration);
-        require(pausable.isPaused(), PauseFailed());
-
-        delete pauserOf[_pausable];
-
-        emit PauserSet(_pausable, address(0), msg.sender);
-        emit Paused(_pausable, msg.sender, duration);
+        _setPauseDuration(_pauseDuration);
+        _setHeartbeatInterval(_heartbeatInterval);
     }
 
     // =========================================================================
     // View functions
     // =========================================================================
 
-    /// @notice Returns whether a pauser's check-in is valid (not expired).
-    /// @param  _pauser Pauser address to check.
-    /// @return True if the pauser's check-in has not expired.
-    function isCheckInValid(address _pauser) external view returns (bool) {
-        return block.timestamp <= latestCheckIn[_pauser] + checkInWindow;
+    /// @notice Return whether a pauser has heartbeat within the interval.
+    /// @param  _pauser Pauser address.
+    function isPauserAlive(address _pauser) public view returns (bool) {
+        return block.timestamp <= latestHeartbeat[_pauser] + heartbeatInterval;
+    }
+
+    // =========================================================================
+    // Admin functions
+    // =========================================================================
+
+    /// @notice Set the pause duration applied to all pausables on trigger.
+    /// @param  _pauseDuration New duration in seconds. Within [MIN_PAUSE_DURATION, MAX_PAUSE_DURATION].
+    function setPauseDuration(uint256 _pauseDuration) external onlyAdmin {
+        require(_pauseDuration != pauseDuration, PauseDurationUnchanged());
+        _setPauseDuration(_pauseDuration);
+    }
+
+    /// @notice Set the heartbeat interval pausers must maintain to remain eligible.
+    /// @param  _heartbeatInterval New interval in seconds. Within [MIN_HEARTBEAT_INTERVAL, MAX_HEARTBEAT_INTERVAL].
+    function setHeartbeatInterval(uint256 _heartbeatInterval) external onlyAdmin {
+        require(_heartbeatInterval != heartbeatInterval, HeartbeatIntervalUnchanged());
+        _setHeartbeatInterval(_heartbeatInterval);
+    }
+
+    /// @notice Assign, replace, or remove a pauser for a pausable.
+    ///         - One pauser per pausable. Previous pauser is overwritten.
+    ///         - Heartbeat set to now on assignment. Admin must verify liveness externally.
+    ///         - Pass address(0) to remove the pauser.
+    /// @param  _pausable Pausable contract address.
+    /// @param  _pauser New pauser address. Zero removes the pauser.
+    /// @dev    Does not verify CircuitBreaker has pause permission on the pausable.
+    ///         Re-assigning the same pauser is permitted and refreshes their heartbeat.
+    ///         Removal is combined with assignment to prevent a front-running attack
+    ///         where the pauser triggers between separate remove and assign calls.
+    function setPauser(address _pausable, address _pauser) external onlyAdmin {
+        _setPauser(_pausable, _pauser);
+        
+        if (_pauser != address(0)) _updateHeartbeat(_pauser);
+    }
+
+    // =========================================================================
+    // Pauser functions
+    // =========================================================================
+
+    /// @notice Record a liveness proof. Maintains eligibility to pause.
+    ///         Also called by pause() before triggering.
+    /// @param  _pausable Pausable the caller is assigned to.
+    /// @dev    Requires pausable for auth lookup, preventing unassigned callers.
+    function heartbeat(address _pausable) public {
+        address assignedPauser = getPauser[_pausable];
+        require(msg.sender == assignedPauser, SenderNotPauser());
+        require(isPauserAlive(msg.sender), HeartbeatFlatlined());
+
+        _updateHeartbeat(msg.sender);
+    }
+
+    /// @notice Pause a pausable contract.
+    /// @param  _pausable Pausable contract to pause.
+    function pause(address _pausable) external nonReentrant {
+        heartbeat(_pausable);
+
+        uint256 duration = pauseDuration;
+        IPausable pausable = IPausable(_pausable);
+
+        _setPauser(_pausable, address(0));
+        pausable.pauseFor(duration);
+        require(pausable.isPaused(), PauseFailed());
+
+        emit PauseTriggered(_pausable, msg.sender, duration);
+    }
+
+    // =========================================================================
+    // Internal functions
+    // =========================================================================
+
+    function _updateHeartbeat(address _pauser) internal {
+        latestHeartbeat[_pauser] = block.timestamp;
+        emit HeartbeatUpdated(_pauser);
+    }
+
+   function _setPauser(address _pausable, address _pauser) internal {
+        require(_pausable != address(0), PausableIsZero());
+
+        address previousPauser = getPauser[_pausable];
+        getPauser[_pausable] = _pauser;
+
+        emit PauserSet(_pausable, previousPauser, _pauser);
+    }
+
+    function _setPauseDuration(uint256 _pauseDuration) internal {
+        require(_pauseDuration >= MIN_PAUSE_DURATION, PauseDurationBelowMin());
+        require(_pauseDuration <= MAX_PAUSE_DURATION, PauseDurationAboveMax());
+
+        uint256 previousPauseDuration = pauseDuration;
+        pauseDuration = _pauseDuration;
+
+        emit PauseDurationUpdated(previousPauseDuration, _pauseDuration);
+    }
+
+    function _setHeartbeatInterval(uint256 _heartbeatInterval) internal {
+        require(_heartbeatInterval >= MIN_HEARTBEAT_INTERVAL, HeartbeatIntervalBelowMin());
+        require(_heartbeatInterval <= MAX_HEARTBEAT_INTERVAL, HeartbeatIntervalAboveMax());
+
+        uint256 previousHeartbeatInterval = heartbeatInterval;
+        heartbeatInterval = _heartbeatInterval;
+
+        emit HeartbeatIntervalUpdated(previousHeartbeatInterval, _heartbeatInterval);
     }
 }
