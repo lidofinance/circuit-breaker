@@ -100,7 +100,6 @@ contract CircuitBreaker {
     event CheckInWindowSet(uint256 previousCheckInWindow, uint256 checkInWindow);
 
     event PauserSet(address indexed pausable, address indexed pauser, address indexed previousPauser);
-    event PauserRemoved(address indexed pausable, address indexed pauser);
     event CheckedIn(address indexed pauser);
 
     event Paused(address indexed pausable, address indexed pauser, uint256 pauseDuration);
@@ -122,9 +121,6 @@ contract CircuitBreaker {
     error SameCheckInWindow();
 
     error ZeroPausable();
-    error ZeroPauser();
-    error PauserNotSet();
-
     error SenderNotAdmin(address expectedAdmin);
     error SenderNotPauser(address pausable, address assignedPauser);
 
@@ -227,34 +223,31 @@ contract CircuitBreaker {
         emit CheckInWindowSet(previousCheckInWindow, _checkInWindow);
     }
 
-    /// @notice Assign or replace a pauser for a pausable contract.
+    /// @notice Assign, replace, or remove a pauser for a pausable contract.
     ///         Only 1 pauser per pausable, the previous pauser will be overwritten.
-    ///         The pauser's check-in is set to the current timestamp on assignment.
-    /// @param  _pausable Pausable contract address. Must be non-zero.
-    /// @param  _pauser Pauser address. Must be non-zero.
+    ///         The pauser's check-in is set to the current timestamp on assignment,
+    ///         implying the admin must have confirmed the liveness
+    ///         of the assigned pauser outside of this contract. 
+    ///         Pass address(0) as _pauser to remove the pauser.
+    /// @param  _pausable Pausable contract address.
+    /// @param  _pauser New pauser address. Zero address removes the pauser.
     /// @dev    Function does not check whether CircuitBreaker has the permission to pause.
     ///         Re-assigning the same pauser is permitted and refreshes their check-in timestamp.
+    ///         Removal is combined with assignment to prevent a front-running attack where
+    ///         the pauser pauses the contract between a removePauser and setPauser call,
+    ///         causing the DAO vote enactment to revert.
     function setPauser(address _pausable, address _pauser) external onlyAdmin {
         require(_pausable != address(0), ZeroPausable());
-        require(_pauser != address(0), ZeroPauser());
 
         address previousPauser = pauserOf[_pausable];
         pauserOf[_pausable] = _pauser;
-        latestCheckIn[_pauser] = block.timestamp;
+
+        if (_pauser != address(0)) {
+            latestCheckIn[_pauser] = block.timestamp;
+            emit CheckedIn(_pauser);
+        }
 
         emit PauserSet(_pausable, _pauser, previousPauser);
-        emit CheckedIn(_pauser);
-    }
-
-    /// @notice Remove the pauser for a pausable contract.
-    /// @param  _pausable Pausable contract address. Must be non-zero.
-    function removePauser(address _pausable) external onlyAdmin {
-        require(_pausable != address(0), ZeroPausable());
-        address previousPauser = pauserOf[_pausable];
-        require(previousPauser != address(0), PauserNotSet());
-
-        delete pauserOf[_pausable];
-        emit PauserRemoved(_pausable, previousPauser);
     }
 
     // =========================================================================
@@ -295,7 +288,7 @@ contract CircuitBreaker {
 
         delete pauserOf[_pausable];
 
-        emit PauserRemoved(_pausable, msg.sender);
+        emit PauserSet(_pausable, address(0), msg.sender);
         emit Paused(_pausable, msg.sender, duration);
     }
 

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.34;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, Vm} from "forge-std/Test.sol";
 import {CircuitBreaker, IPausable} from "../src/CircuitBreaker.sol";
 
 // ---------------------------------------------------------------------------
@@ -373,55 +373,42 @@ contract CircuitBreakerTest is Test {
         cb.setPauser(address(0), pauserAddr);
     }
 
-    function test_SetPauser_RevertIf_ZeroPauser() public {
-        vm.expectRevert(CircuitBreaker.ZeroPauser.selector);
+    function test_SetPauser_RemovesPauser_WhenZeroAddress() public {
+        vm.startPrank(admin);
+        cb.setPauser(address(mockPausable), pauserAddr);
+        cb.setPauser(address(mockPausable), address(0));
+        vm.stopPrank();
+        assertEq(cb.pauserOf(address(mockPausable)), address(0));
+    }
+
+    function test_SetPauser_EmitsPauserSet_WhenRemoving() public {
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), pauserAddr);
+
+        vm.expectEmit(true, true, true, true);
+        emit CircuitBreaker.PauserSet(address(mockPausable), address(0), pauserAddr);
         vm.prank(admin);
         cb.setPauser(address(mockPausable), address(0));
+    }
+
+    function test_SetPauser_DoesNotEmitCheckIn_WhenRemoving() public {
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), pauserAddr);
+
+        vm.recordLogs();
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), address(0));
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertTrue(logs[i].topics[0] != CircuitBreaker.CheckedIn.selector);
+        }
     }
 
     function test_SetPauser_RevertIf_SenderNotAdmin() public {
         vm.expectRevert(abi.encodeWithSelector(CircuitBreaker.SenderNotAdmin.selector, admin));
         vm.prank(stranger);
         cb.setPauser(address(mockPausable), pauserAddr);
-    }
-
-    // =========================================================================
-    // removePauser
-    // =========================================================================
-
-    function test_RemovePauser_ClearsPauser() public {
-        vm.startPrank(admin);
-        cb.setPauser(address(mockPausable), pauserAddr);
-        cb.removePauser(address(mockPausable));
-        vm.stopPrank();
-        assertEq(cb.pauserOf(address(mockPausable)), address(0));
-    }
-
-    function test_RemovePauser_EmitsPauserRemoved() public {
-        vm.startPrank(admin);
-        cb.setPauser(address(mockPausable), pauserAddr);
-        vm.expectEmit(true, true, false, false);
-        emit CircuitBreaker.PauserRemoved(address(mockPausable), pauserAddr);
-        cb.removePauser(address(mockPausable));
-        vm.stopPrank();
-    }
-
-    function test_RemovePauser_RevertIf_SenderNotAdmin() public {
-        vm.expectRevert(abi.encodeWithSelector(CircuitBreaker.SenderNotAdmin.selector, admin));
-        vm.prank(stranger);
-        cb.removePauser(address(mockPausable));
-    }
-
-    function test_RemovePauser_RevertIf_ZeroPausable() public {
-        vm.expectRevert(CircuitBreaker.ZeroPausable.selector);
-        vm.prank(admin);
-        cb.removePauser(address(0));
-    }
-
-    function test_RemovePauser_RevertIf_NoPauserAssigned() public {
-        vm.expectRevert(CircuitBreaker.PauserNotSet.selector);
-        vm.prank(admin);
-        cb.removePauser(address(mockPausable));
     }
 
     // =========================================================================
@@ -595,11 +582,11 @@ contract CircuitBreakerTest is Test {
         cb.pause(address(mockPausable));
     }
 
-    function test_Pause_EmitsPauserRemoved() public {
+    function test_Pause_EmitsPauserSet_WithZeroPauser() public {
         _assignPauser(address(mockPausable), pauserAddr);
 
-        vm.expectEmit(true, true, false, false);
-        emit CircuitBreaker.PauserRemoved(address(mockPausable), pauserAddr);
+        vm.expectEmit(true, true, true, true);
+        emit CircuitBreaker.PauserSet(address(mockPausable), address(0), pauserAddr);
         vm.prank(pauserAddr);
         cb.pause(address(mockPausable));
     }
@@ -811,14 +798,14 @@ contract CircuitBreakerEdgeCaseTest is Test {
     }
 
     // =========================================================================
-    // removePauser blocks subsequent pause
+    // setPauser(address(0)) blocks subsequent pause
     // =========================================================================
 
-    function test_Pause_RevertIf_PauserRemoved() public {
+    function test_Pause_RevertIf_PauserSetToZero() public {
         _assignPauser(address(mockPausable), pauserAddr);
 
         vm.prank(admin);
-        cb.removePauser(address(mockPausable));
+        cb.setPauser(address(mockPausable), address(0));
 
         vm.expectRevert(
             abi.encodeWithSelector(CircuitBreaker.SenderNotPauser.selector, address(mockPausable), address(0))
@@ -901,13 +888,13 @@ contract CircuitBreakerEdgeCaseTest is Test {
     }
 
     // =========================================================================
-    // setPauser after removePauser
+    // setPauser after removal via setPauser(address(0))
     // =========================================================================
 
-    function test_SetPauser_AfterRemovePauser() public {
+    function test_SetPauser_AfterRemoval() public {
         _assignPauser(address(mockPausable), pauserAddr);
         vm.prank(admin);
-        cb.removePauser(address(mockPausable));
+        cb.setPauser(address(mockPausable), address(0));
 
         address pauser2 = makeAddr("pauser2");
         _assignPauser(address(mockPausable), pauser2);
