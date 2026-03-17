@@ -99,7 +99,6 @@ contract CircuitBreaker {
     // =========================================================================
 
     error AdminIsZero();
-    error AdminIsSelf();
 
     error MinPauseDurationIsZero();
     error MaxPauseDurationIsZero();
@@ -162,7 +161,6 @@ contract CircuitBreaker {
         uint256 _heartbeatInterval
     ) {
         require(_admin != address(0), AdminIsZero());
-        require(_admin != address(this), AdminIsSelf());
         require(_minPauseDuration != 0, MinPauseDurationIsZero());
         require(_maxPauseDuration != 0, MaxPauseDurationIsZero());
         require(_minPauseDuration <= _maxPauseDuration, MinPauseDurationExceedsMax());
@@ -190,7 +188,7 @@ contract CircuitBreaker {
 
     /// @notice Return whether a pauser has heartbeat within the interval.
     /// @param  _pauser Pauser address.
-    function isPauserAlive(address _pauser) public view returns (bool) {
+    function isPauserActive(address _pauser) public view returns (bool) {
         return block.timestamp <= latestHeartbeat[_pauser] + heartbeatInterval;
     }
 
@@ -239,7 +237,7 @@ contract CircuitBreaker {
     function heartbeat(address _pausable) public {
         address assignedPauser = getPauser[_pausable];
         require(msg.sender == assignedPauser, SenderNotPauser());
-        require(isPauserAlive(msg.sender), HeartbeatFlatlined());
+        require(isPauserActive(msg.sender), HeartbeatFlatlined());
 
         _updateHeartbeat(msg.sender);
     }

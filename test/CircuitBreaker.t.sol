@@ -80,6 +80,29 @@ contract MockPausableReentrant is IPausable {
 }
 
 // ---------------------------------------------------------------------------
+// Mock: cross-pausable reentrancy — calls pause() on a different pausable
+// ---------------------------------------------------------------------------
+contract MockPausableCrossReentrant is IPausable {
+    CircuitBreaker private _cb;
+    address private _otherPausable;
+    bool private _paused;
+
+    constructor(CircuitBreaker cb_, address otherPausable_) {
+        _cb = cb_;
+        _otherPausable = otherPausable_;
+    }
+
+    function isPaused() external view returns (bool) {
+        return _paused;
+    }
+
+    function pauseFor(uint256) external {
+        _paused = true;
+        _cb.pause(_otherPausable);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Test suite
 // ---------------------------------------------------------------------------
 contract CircuitBreakerTest is Test {
@@ -194,21 +217,6 @@ contract CircuitBreakerTest is Test {
         vm.expectRevert(CircuitBreaker.AdminIsZero.selector);
         new CircuitBreaker(
             address(0),
-            MIN_PAUSE_DURATION,
-            MAX_PAUSE_DURATION,
-            MIN_HEARTBEAT_INTERVAL,
-            MAX_HEARTBEAT_INTERVAL,
-            PAUSE_DURATION,
-            HEARTBEAT_INTERVAL
-        );
-    }
-
-    function test_Constructor_RevertIf_SelfAdmin() public {
-        // Predict the address of the next contract deployed by this test contract
-        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
-        vm.expectRevert(CircuitBreaker.AdminIsSelf.selector);
-        new CircuitBreaker(
-            predicted,
             MIN_PAUSE_DURATION,
             MAX_PAUSE_DURATION,
             MIN_HEARTBEAT_INTERVAL,
@@ -621,27 +629,27 @@ contract CircuitBreakerTest is Test {
     }
 
     // =========================================================================
-    // isPauserAlive
+    // isPauserActive
     // =========================================================================
 
-    function test_IsPauserAlive_TrueWhenFresh() public {
+    function test_IsPauserActive_TrueWhenFresh() public {
         _assignPauser(address(mockPausable), pauserAddr);
-        assertTrue(cb.isPauserAlive(pauserAddr));
+        assertTrue(cb.isPauserActive(pauserAddr));
     }
 
-    function test_IsPauserAlive_TrueAtBoundary() public {
+    function test_IsPauserActive_TrueAtBoundary() public {
         _assignPauser(address(mockPausable), pauserAddr);
         vm.warp(block.timestamp + HEARTBEAT_INTERVAL);
-        assertTrue(cb.isPauserAlive(pauserAddr));
+        assertTrue(cb.isPauserActive(pauserAddr));
     }
 
-    function test_IsPauserAlive_FalseWhenExpired() public {
+    function test_IsPauserActive_FalseWhenExpired() public {
         _assignPauser(address(mockPausable), pauserAddr);
         vm.warp(block.timestamp + HEARTBEAT_INTERVAL + 1);
-        assertFalse(cb.isPauserAlive(pauserAddr));
+        assertFalse(cb.isPauserActive(pauserAddr));
     }
 
-    function test_IsPauserAlive_FalseForUnknownPauser() public view {
+    function test_IsPauserActive_FalseForUnknownPauser() public view {
         // latestHeartbeat is 0 for unknown, so 0 + heartbeatInterval < block.timestamp (assuming timestamp > heartbeatInterval)
         // Actually at timestamp 1, 0 + 30 days > 1, so it would be true.
         // Let's just verify the function works for a never-assigned address at a late timestamp.
@@ -794,6 +802,19 @@ contract CircuitBreakerTest is Test {
     function test_Pause_RevertIf_Reentrancy() public {
         MockPausableReentrant reentrant = new MockPausableReentrant(cb);
         _assignPauser(address(reentrant), pauserAddr);
+
+        vm.prank(pauserAddr);
+        vm.expectRevert(CircuitBreaker.ReentrantCall.selector);
+        cb.pause(address(reentrant));
+    }
+
+    function test_Pause_RevertIf_CrossPausableReentrancy() public {
+        MockPausable target = new MockPausable();
+        MockPausableCrossReentrant reentrant = new MockPausableCrossReentrant(cb, address(target));
+
+        address pauser2 = makeAddr("pauser2");
+        _assignPauser(address(reentrant), pauserAddr);
+        _assignPauser(address(target), pauser2);
 
         vm.prank(pauserAddr);
         vm.expectRevert(CircuitBreaker.ReentrantCall.selector);
