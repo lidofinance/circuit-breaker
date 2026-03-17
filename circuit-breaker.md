@@ -39,33 +39,33 @@ In this analogy, a GateSeal works much like a fuse and CircuitBreaker is, well, 
 
 ### How It Works
 
-A single CircuitBreaker is deployed with minimal configuration: just the DAO Agent address, and is never redeployed. The DAO configures pausers and pausable contracts.
+A single CircuitBreaker is deployed with the DAO Agent address, pause duration bounds, heartbeat interval bounds, and initial values for both. It is never redeployed. The DAO configures pausers and pausable contracts.
 
 **Pausables and pausers.** The DAO registers pausable contracts by pairing each one with a pauser (committee). That's the entire configuration per contract: one mapping from a pausable contract to the pauser responsible for it. The DAO grants pause permission on each protected contract to the CircuitBreaker's address once. Since the address never changes, this permission does not need to be revoked and regranted.
 
 **Pausable-pauser relationship.** Each pausable contract is assigned exactly one pauser, but a single pauser can be responsible for multiple pausable contracts. This one-to-one relationship from the pausable's side is a deliberate design choice. Allowing multiple pausers per pausable would introduce ambiguity about who is responsible for which contract, complicate accountability when a pause occurs, and expand the attack surface by multiplying the number of parties authorized to pause a given contract. A single pauser per pausable keeps the authorization model simple and auditable. If the DAO needs to transfer responsibility, it reassigns the pausable to a different pauser in a single operation.
 
-**Pause duration.** Each pausable contract has its own pause duration, set by the DAO when assigning a pauser. The duration is cleared together with the pauser on use — after a pause, the DAO must call setPauser again with a new duration to re-arm the pausable. This allows different contracts to be paused for different lengths of time depending on their risk profile.
+**Pause duration.** A single pause duration applies to all pausable contracts. The DAO sets it within bounds configured at deployment. After a pause, the pauser assignment is cleared — the DAO must re-assign the pauser to re-arm the pausable.
 
-**Pausing.** In an emergency, the pauser calls the CircuitBreaker with the contract to pause. The CircuitBreaker verifies the caller is the assigned pauser — whether or not the contract is already paused. If the contract is already paused, the pause is skipped. Otherwise, the contract is paused for the configured duration and the CircuitBreaker verifies the pause succeeded. In both cases, the pauser's heartbeat is updated. Batching multiple pauses can be done externally (e.g. multisig multi-send).
+**Pausing.** In an emergency, the pauser calls the CircuitBreaker with the contract to pause. The CircuitBreaker verifies the caller is the assigned pauser and that their heartbeat is active. The pauser assignment is then cleared, the contract is paused for the configured duration, and the CircuitBreaker verifies the pause succeeded. Batching multiple pauses can be done externally (e.g. multisig multi-send).
 
 **Heartbeat.** The heartbeat is tied to the pauser, not to individual contracts. A single heartbeat transaction proves the pauser is alive for everything it's responsible for, regardless of how many contracts it covers. This directly addresses V2's redundant prolongation problem: instead of one prolongation per GateSeal, there is one heartbeat per pauser.
 
-The heartbeat doesn't gate any functionality. A pauser with a stale heartbeat can still pause. It exists solely for observability: monitoring systems watch for stale heartbeats and alert the DAO that a pauser may be unresponsive. The reasoning is simple: throwing out the fire extinguisher because you're not sure if it still works is worse than having one that might not work. If the DAO determines a pauser is truly dead, it reassigns the pauser's contracts to a new pauser.
+The heartbeat gates pausing: a pauser whose heartbeat has expired (exceeds the configured heartbeat interval) cannot pause or refresh their heartbeat. The DAO configures the heartbeat interval within bounds set at deployment. A committee that cannot prove liveness should not be trusted to respond in an emergency. If the DAO determines a pauser is unresponsive, it reassigns the pauser's contracts to a new pauser.
 
 ## Comparison
 
 | Problem                              | GateSeal V1                                                                                          | GateSeal V2                                                                                                                                               | CircuitBreaker                                                                                                                                                                                   |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Rotation burden**                  | DAO performs a full redeploy every year                                                              | Committee prolongs within set windows, but each GateSeal requires its own prolongation; windows are inflexible, and parameters are misconfiguration-prone | One heartbeat per pauser confirms liveness (one tx a year total). If pauser is not responsive, DAO replaces it with a vote (single vote item). No expiry, no windows, no prolongation parameters |
-| **Pause duration limits**            | Hardcoded 4 to 14 day range at deploy time. Change in vote timeline requires blueprint redeployment. | Set at deploy time without limits                                                                                                                         | Per-pausable value, set at pauser assignment time. Cleared together with the pauser on use; DAO must supply a new duration when re-assigning                                                           |
+| **Rotation burden**                  | DAO performs a full redeploy every year                                                              | Committee prolongs within set windows, but each GateSeal requires its own prolongation; windows are inflexible, and parameters are misconfiguration-prone | One heartbeat per pauser confirms liveness. If pauser is not responsive, DAO replaces it with a vote (single vote item). No expiry, no windows, no prolongation parameters |
+| **Pause duration limits**            | Hardcoded 4 to 14 day range at deploy time. Change in vote timeline requires blueprint redeployment. | Set at deploy time without limits                                                                                                                         | Single global value within min/max bounds set at deployment. Updatable by admin. Pauser assignment cleared on use; DAO must re-assign to re-arm                                                           |
 | **Permission re-grants after use**   | New address every cycle (every year)                                                                 | New address every cycle but the cycle is significantly extended (up to 5 years)                                                                           | Permanent address. Permission granted once per contract, survives all pause cycles. Doesn't need to be regranted                                                                                 |
 | **Adding new pausable contracts**    | Deploy new GateSeal and hold a role grant vote                                                       | Deploy new GateSeal and hold a role grant vote                                                                                                            | Hold a vote to add a pauser-contract pair on the existing CircuitBreaker                                                                                                                         |
 | **Scaling**                          | One GateSeal per scope, each with its own lifecycle                                                  | Same, plus each GateSeal needs its own prolongation (multiple txs for the same committee on different GateSeals)                                          | All pausers and contracts in one contract. One heartbeat tx per pauser                                                                                                                           |
 | **Coverage gaps**                    | Gap between expiry and redeployment                                                                  | Reduced but possible if prolongation window is missed                                                                                                     | No gap between expiration and replacement                                                                                                                                                        |
 | **Swapping a dead committee**        | Deploy new GateSeal, re-grant all permissions                                                        | Same problem                                                                                                                                              | Reassign contracts to new pauser address                                                                                                                                                         |
 | **Granular use**                     | Subset selection possible but entire GateSeal is expired                                             | Entire GateSeal is expired                                                                                                                                | Per-contract pausing. Pausing one does not affect the ability to pause others                                                                                                                    |
-| **Misconfiguration risk**            | Low, 4 simple parameters                                                                             | High, 8 parameters with interlocking constraints                                                                                                          | Low, per-pausable duration plus contract-pauser pairs                                                                                                                                            |
+| **Misconfiguration risk**            | Low, 4 simple parameters                                                                             | High, 8 parameters with interlocking constraints                                                                                                          | Low, global duration plus contract-pauser pairs                                                                                                                                            |
 | **DG's ResealManager compatibility** | ResealManager has its own permission and pause mechanic. Independent mechanisms  | Same                                                                                                        | Same                                                                                                       |
 
 ### Risks and Mitigations
@@ -74,7 +74,7 @@ The heartbeat doesn't gate any functionality. A pauser with a stale heartbeat ca
 
 **Broad pause authority.** The CircuitBreaker address holds pause permissions on multiple pausable contracts. Mitigation: the CircuitBreaker can only pause a contract when called by its assigned pauser. The DAO can revoke permission on any contract independently.
 
-**No forced expiry.** A pauser with lost keys retains authority until the DAO explicitly reassigns their contracts. Mitigation: the heartbeat feature surfaces unresponsive pausers. The DAO can reassign contracts or remove pausers at any time.
+**No forced expiry.** A pauser with lost keys retains its assignment until the DAO explicitly reassigns their contracts. Mitigation: a pauser whose heartbeat has expired cannot pause. The DAO can reassign contracts or remove pausers at any time.
 
 ### Architecture
 
@@ -88,52 +88,59 @@ A walkthrough using two pausers (**Pauser_A** and **Pauser_B**) managing four pa
 DEPLOYMENT - dev team
 │
 │  CircuitBreaker is deployed with:
-│    admin = DAO Agent
+│    admin              = DAO Agent
+│    minPauseDuration   = 4 days
+│    maxPauseDuration   = 30 days
+│    minHeartbeatInterval = 30 days
+│    maxHeartbeatInterval = 365 days
+│    pauseDuration      = 14 days
+│    heartbeatInterval  = 365 days
 │
 CONFIGURATION - DAO
 │
 │  DAO configures the CircuitBreaker in a single vote:
-│    setPauser(WithdrawalQueue,     Pauser_A, 14 days)
-│    setPauser(ValidatorExitBus,    Pauser_A, 14 days)
-│    setPauser(VaultHub,            Pauser_B,  7 days)
-│    setPauser(PredepositGuarantee, Pauser_B,  7 days)
-│    grantRole(WithdrawalQueue.PAUSE_ROLE, CircuitBreaker)
-│    grantRole(ValidatorExitBus.PAUSE_ROLE, CircuitBreaker)
-│    grantRole(VaultHub.PAUSE_ROLE, CircuitBreaker)
-│    grantRole(PredepositGuarantee.PAUSE_ROLE, CircuitBreaker)
+│    assign Pauser_A to WithdrawalQueue
+│    assign Pauser_A to ValidatorExitBus
+│    assign Pauser_B to VaultHub
+│    assign Pauser_B to PredepositGuarantee
+│    grant PAUSE_ROLE on WithdrawalQueue to CircuitBreaker
+│    grant PAUSE_ROLE on ValidatorExitBus to CircuitBreaker
+│    grant PAUSE_ROLE on VaultHub to CircuitBreaker
+│    grant PAUSE_ROLE on PredepositGuarantee to CircuitBreaker
 │
-│  State:
-│    WithdrawalQueue      → Pauser_A, 14 days   ✓ ready
-│    ValidatorExitBus     → Pauser_A, 14 days   ✓ ready
-│    VaultHub             → Pauser_B,  7 days   ✓ ready
-│    PredepositGuarantee  → Pauser_B,  7 days   ✓ ready
+│  State (pauseDuration = 14 days):
+│    WithdrawalQueue      → Pauser_A   ✓ ready
+│    ValidatorExitBus     → Pauser_A   ✓ ready
+│    VaultHub             → Pauser_B   ✓ ready
+│    PredepositGuarantee  → Pauser_B   ✓ ready
 │
 HEARTBEAT - pausers
 │
-│  Pauser_A calls heartbeat(WithdrawalQueue)
-│  Pauser_B calls heartbeat(VaultHub)
+│  Pauser_A sends a heartbeat for WithdrawalQueue
+│  Pauser_B sends a heartbeat for VaultHub
 │
 │  Latest heartbeat timestamps are recorded in the contract.
 │
 PAUSE - pauser
 │
 │  Vulnerability discovered affecting ValidatorExitBus.
-│  Pauser_A calls pause(ValidatorExitBus).
+│  Pauser_A pauses ValidatorExitBus.
 │  ValidatorExitBus is paused for 14 days.
-│  Pauser_A's heartbeat is updated.
+│  Pauser_A assignment is cleared. Heartbeat is updated.
 │
-│  State:
-│    WithdrawalQueue      → Pauser_A, 14 days   ✓ ready
-│    ValidatorExitBus     →           14 days   ✓ ready (paused for 14 days)
-│    VaultHub             → Pauser_B,  7 days   ✓ ready
-│    PredepositGuarantee  → Pauser_B,  7 days   ✓ ready
+│  State (pauseDuration = 14 days):
+│    WithdrawalQueue      → Pauser_A   ✓ ready
+│    ValidatorExitBus     → (none)     ✗ paused, pauser cleared
+│    VaultHub             → Pauser_B   ✓ ready
+│    PredepositGuarantee  → Pauser_B   ✓ ready
 │
 RECONFIGURATION (if needed) - DAO vote
 │
 │  Any of these, no redeployment required:
-│    setPauser(ValidatorExitBus, Pauser_A, 21 days)  — re-assign with new duration
-│    removePauser(ValidatorExitBus)                  — remove pauser
-│    setPauser(PredepositGuarantee, Pauser_New, 7 days) — replace dead pauser
+│    re-assign Pauser_A to ValidatorExitBus
+│    remove pauser from ValidatorExitBus
+│    assign Pauser_New to PredepositGuarantee  — replace dead pauser
+│    update pause duration to 21 days
 │
 │  CircuitBreaker address and all existing permissions remain unchanged.
 ▼

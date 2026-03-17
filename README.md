@@ -8,17 +8,15 @@ It's the successor to [GateSeals](https://github.com/lidofinance/gate-seals). Un
 
 ## Design
 
-There are two roles: the **admin** (the DAO Agent) and **pausers** (multisig committees). The admin assigns a pauser to each pausable contract via `setPauser()`. One pauser can cover multiple contracts, but each contract has exactly one pauser.
+There are two roles: the **admin** (the DAO Agent) and **pausers** (multisig committees). The admin assigns a pauser to each pausable contract. One pauser can cover multiple contracts, but each contract has exactly one pauser.
 
-In an emergency, the pauser calls `pause()` with a contract address. The caller must be the assigned pauser for that contract. The contract is paused for its pre-configured duration, set by the admin when assigning a pauser via `setPauser()`. Batch calls can be constructed externally (e.g. via multisig multi-send).
+In an emergency, the pauser triggers a pause on a contract address. The caller must be the assigned pauser for that contract and must have an active heartbeat. The contract is paused for the globally configured pause duration, which is updatable by the admin. Batch calls can be constructed externally (e.g. via multisig multi-send).
 
-After a successful pause, the pauser assignment is deleted. The DAO has to explicitly re-assign before the contracts can be paused again.
+After a successful pause, the pauser assignment is cleared. The DAO has to explicitly re-assign before the contract can be paused again.
 
-If a contract is already paused, the pause is skipped. The caller's heartbeat is still updated.
+Pause duration is a single global value (within min/max bounds set at deployment) that applies to all pausables.
 
-Pause durations are per-pausable and updatable by the admin.
-
-Pausers can call `heartbeat(pausable)` with any pausable they're registered for to record a liveness timestamp (it's also called automatically on `pause()`). The call verifies the caller is the registered pauser, so only known pausers can emit the signal. This is purely for off-chain monitoring.
+Pausers must periodically send a heartbeat for any pausable they're registered for to prove liveness (also done automatically on pause). A pauser whose heartbeat has expired cannot pause or refresh their heartbeat. The DAO configures the heartbeat interval within bounds set at deployment.
 
 ## vs. GateSeal
 
