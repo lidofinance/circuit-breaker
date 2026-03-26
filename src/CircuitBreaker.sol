@@ -78,7 +78,7 @@ contract CircuitBreaker {
     mapping(address pausable => address pauser) public getPauser;
 
     /// @notice Timestamp after which a pauser is no longer eligible to pause or refresh.
-    mapping(address pauser => uint256 expiresAt) public getHeartbeatExpiry;
+    mapping(address pauser => uint256 timestamp) public getHeartbeatExpiry;
 
     /// @dev Cross-pausable reentrancy guard.
     bool transient lock;
@@ -105,27 +105,27 @@ contract CircuitBreaker {
     // Errors
     // =========================================================================
 
+    error SenderNotAdmin();
+    error SenderNotPauser();
+    
     error AdminIsZero();
+    error PausableIsZero();
 
     error MinPauseDurationIsZero();
     error MaxPauseDurationIsZero();
     error MinPauseDurationExceedsMax();
-
+    
+    error PauseDurationBelowMin();
+    error PauseDurationAboveMax();
+    error PauseDurationUnchanged();
+    
     error MinHeartbeatIntervalIsZero();
     error MaxHeartbeatIntervalIsZero();
     error MinHeartbeatIntervalExceedsMax();
 
-    error PauseDurationBelowMin();
-    error PauseDurationAboveMax();
-    error PauseDurationUnchanged();
-
     error HeartbeatIntervalBelowMin();
     error HeartbeatIntervalAboveMax();
     error HeartbeatIntervalUnchanged();
-
-    error PausableIsZero();
-    error SenderNotAdmin();
-    error SenderNotPauser();
 
     error HeartbeatExpired();
     error PauseFailed();
