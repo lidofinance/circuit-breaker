@@ -127,7 +127,7 @@ contract CircuitBreaker {
     error SenderNotAdmin();
     error SenderNotPauser();
 
-    error HeartbeatFlatlined();
+    error HeartbeatExpired();
     error PauseFailed();
     error ReentrantCall();
 
@@ -239,7 +239,7 @@ contract CircuitBreaker {
     /// @dev    Requires pausable only for auth lookup, preventing unassigned callers.
     function heartbeat(address _pausable) public {
         require(msg.sender == getPauser[_pausable], SenderNotPauser());
-        require(isPauserActive(msg.sender), HeartbeatFlatlined());
+        require(isPauserActive(msg.sender), HeartbeatExpired());
 
         _updateHeartbeat(msg.sender);
     }

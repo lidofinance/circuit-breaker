@@ -484,11 +484,11 @@ contract CircuitBreakerTest is Test {
         cb.heartbeat(address(mockPausable));
     }
 
-    function test_Heartbeat_RevertIf_HeartbeatFlatlined() public {
+    function test_Heartbeat_RevertIf_HeartbeatExpired() public {
         _assignPauser(address(mockPausable), pauserAddr);
         vm.warp(block.timestamp + HEARTBEAT_INTERVAL + 1);
 
-        vm.expectRevert(CircuitBreaker.HeartbeatFlatlined.selector);
+        vm.expectRevert(CircuitBreaker.HeartbeatExpired.selector);
         vm.prank(pauserAddr);
         cb.heartbeat(address(mockPausable));
     }
@@ -526,11 +526,11 @@ contract CircuitBreakerTest is Test {
         cb.pause(address(mockPausable));
     }
 
-    function test_Pause_RevertIf_HeartbeatFlatlined() public {
+    function test_Pause_RevertIf_HeartbeatExpired() public {
         _assignPauser(address(mockPausable), pauserAddr);
         vm.warp(block.timestamp + HEARTBEAT_INTERVAL + 1);
 
-        vm.expectRevert(CircuitBreaker.HeartbeatFlatlined.selector);
+        vm.expectRevert(CircuitBreaker.HeartbeatExpired.selector);
         vm.prank(pauserAddr);
         cb.pause(address(mockPausable));
     }
