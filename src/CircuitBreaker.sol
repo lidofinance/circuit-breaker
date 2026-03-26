@@ -71,14 +71,14 @@ contract CircuitBreaker {
     /// @notice Duration in seconds of the pause applied to the pausable on trigger.
     uint256 public pauseDuration;
 
-    /// @notice Timeframe in seconds since latestHeartbeat within which a pauser is considered active.
+    /// @notice Timeframe in seconds added to the current timestamp on heartbeat to compute the expiry.
     uint256 public heartbeatInterval;
 
     /// @notice Per-pausable pauser address.
     mapping(address pausable => address pauser) public getPauser;
 
-    /// @notice Timestamp of a pauser's most recent liveness proof.
-    mapping(address pauser => uint256 timestamp) public latestHeartbeat;
+    /// @notice Timestamp after which a pauser is no longer eligible to pause or refresh.
+    mapping(address pauser => uint256 expiresAt) public getHeartbeatExpiry;
 
     /// @dev Cross-pausable reentrancy guard.
     bool transient lock;
@@ -196,7 +196,7 @@ contract CircuitBreaker {
     /// @notice Return whether a pauser can pause or heartbeat at the moment.
     /// @param  _pauser Pauser address.
     function isPauserActive(address _pauser) public view returns (bool) {
-        return block.timestamp <= latestHeartbeat[_pauser] + heartbeatInterval;
+        return block.timestamp <= getHeartbeatExpiry[_pauser];
     }
 
     // =========================================================================
@@ -267,7 +267,7 @@ contract CircuitBreaker {
     // =========================================================================
 
     function _updateHeartbeat(address _pauser) internal {
-        latestHeartbeat[_pauser] = block.timestamp;
+        getHeartbeatExpiry[_pauser] = block.timestamp + heartbeatInterval;
         emit HeartbeatUpdated(_pauser);
     }
 

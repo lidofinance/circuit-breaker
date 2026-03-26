@@ -380,7 +380,7 @@ contract CircuitBreakerTest is Test {
         cb.setPauser(address(mockPausable), pauserAddr);
 
         assertEq(cb.getPauser(address(mockPausable)), pauserAddr);
-        assertEq(cb.latestHeartbeat(pauserAddr), block.timestamp);
+        assertEq(cb.getHeartbeatExpiry(pauserAddr), block.timestamp + HEARTBEAT_INTERVAL);
     }
 
     function test_SetPauser_OverridesAndEmits() public {
@@ -442,7 +442,7 @@ contract CircuitBreakerTest is Test {
         vm.prank(pauserAddr);
         cb.heartbeat(address(mockPausable));
 
-        assertEq(cb.latestHeartbeat(pauserAddr), newTs);
+        assertEq(cb.getHeartbeatExpiry(pauserAddr), newTs + HEARTBEAT_INTERVAL);
     }
 
     function test_Heartbeat_SucceedsAtExactIntervalBoundary() public {
@@ -451,7 +451,7 @@ contract CircuitBreakerTest is Test {
 
         vm.prank(pauserAddr);
         cb.heartbeat(address(mockPausable));
-        assertEq(cb.latestHeartbeat(pauserAddr), block.timestamp);
+        assertEq(cb.getHeartbeatExpiry(pauserAddr), block.timestamp + HEARTBEAT_INTERVAL);
     }
 
     function test_Heartbeat_UpdatesTimestampOnSubsequentCall() public {
@@ -466,7 +466,7 @@ contract CircuitBreakerTest is Test {
         cb.heartbeat(address(mockPausable));
         uint256 ts2 = block.timestamp;
 
-        assertEq(cb.latestHeartbeat(pauserAddr), ts2);
+        assertEq(cb.getHeartbeatExpiry(pauserAddr), ts2 + HEARTBEAT_INTERVAL);
         assertGt(ts2, ts1);
     }
 
@@ -558,7 +558,7 @@ contract CircuitBreakerTest is Test {
         assertTrue(mockPausable.isPaused());
         assertEq(mockPausable.getResumeSinceTimestamp(), ts + PAUSE_DURATION);
         assertEq(cb.getPauser(address(mockPausable)), address(0));
-        assertEq(cb.latestHeartbeat(pauserAddr), ts);
+        assertEq(cb.getHeartbeatExpiry(pauserAddr), ts + HEARTBEAT_INTERVAL);
     }
 
     // =========================================================================
@@ -781,7 +781,7 @@ contract CircuitBreakerEdgeCaseTest is Test {
         vm.prank(admin);
         cb.setPauser(address(mockPausable), pauserAddr);
 
-        assertEq(cb.latestHeartbeat(pauserAddr), block.timestamp);
+        assertEq(cb.getHeartbeatExpiry(pauserAddr), block.timestamp + HEARTBEAT_INTERVAL);
     }
 
     // =========================================================================
@@ -800,7 +800,7 @@ contract CircuitBreakerEdgeCaseTest is Test {
         vm.prank(pauserAddr);
         cb.pause(address(mp2));
 
-        assertEq(cb.latestHeartbeat(pauserAddr), block.timestamp);
+        assertEq(cb.getHeartbeatExpiry(pauserAddr), block.timestamp + HEARTBEAT_INTERVAL);
         assertTrue(mp2.isPaused());
         assertEq(cb.getPauser(address(mockPausable)), pauserAddr);
     }
@@ -861,7 +861,7 @@ contract CircuitBreakerEdgeCaseTest is Test {
         vm.warp(block.timestamp + 1 hours);
         vm.prank(pauserAddr);
         cb.heartbeat(address(mp2));
-        assertEq(cb.latestHeartbeat(pauserAddr), block.timestamp);
+        assertEq(cb.getHeartbeatExpiry(pauserAddr), block.timestamp + HEARTBEAT_INTERVAL);
     }
 
     // =========================================================================
@@ -884,15 +884,15 @@ contract CircuitBreakerEdgeCaseTest is Test {
         cb.heartbeat(address(mp2));
         uint256 ts2 = block.timestamp;
 
-        assertEq(cb.latestHeartbeat(pauserAddr), ts1);
-        assertEq(cb.latestHeartbeat(pauser2), ts2);
+        assertEq(cb.getHeartbeatExpiry(pauserAddr), ts1 + HEARTBEAT_INTERVAL);
+        assertEq(cb.getHeartbeatExpiry(pauser2), ts2 + HEARTBEAT_INTERVAL);
     }
 
     // =========================================================================
-    // heartbeat interval change affects existing pausers
+    // heartbeat interval change does not affect existing pausers
     // =========================================================================
 
-    function test_HeartbeatIntervalChange_AffectsExistingPausers() public {
+    function test_HeartbeatIntervalChange_DoesNotAffectExistingPausers() public {
         _assignPauser(address(mockPausable), pauserAddr);
 
         vm.warp(block.timestamp + HEARTBEAT_INTERVAL - 1);
@@ -903,11 +903,13 @@ contract CircuitBreakerEdgeCaseTest is Test {
         vm.prank(admin);
         cb.setHeartbeatInterval(MIN_HEARTBEAT_INTERVAL);
 
+        // Pauser's expiry was locked at heartbeat time with the old interval,
+        // so reducing the interval does not retroactively invalidate them.
         vm.warp(block.timestamp + MIN_HEARTBEAT_INTERVAL + 1);
 
-        vm.expectRevert(CircuitBreaker.HeartbeatFlatlined.selector);
         vm.prank(pauserAddr);
         cb.heartbeat(address(mockPausable));
+        assertTrue(cb.isPauserActive(pauserAddr));
     }
 
     // =========================================================================
