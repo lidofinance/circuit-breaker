@@ -15,9 +15,10 @@ interface IPausable {
 
 /// @title  CircuitBreaker
 /// @author Lido
-/// @notice Instantly pauses contracts in an emergency without a DAO vote.
-/// @dev    DAO votes are too slow to respond to active exploits. This contract lets
-///         the DAO delegate pause authority to designated pausers that can act instantly.
+/// @notice Emergency pause manager for pausable contracts.
+/// @dev    Some setups (e.g. a DAO with on-chain voting) cannot respond fast enough
+///         to active exploits. This contract lets the admin delegate pause authority to
+///         designated pausers that can act instantly.
 ///
 ///         Design:
 ///         - Immutable admin to avoid ownership exploits/mistakes.
@@ -28,13 +29,12 @@ interface IPausable {
 ///           should not be trusted to respond in an emergency.
 ///
 ///         Assumptions:
-///         - Admin is a DAO agent or other DAO-authorized executor.
 ///         - Admin is always honest.
 ///         - Admin can make mistakes.
 ///         - Pausable implements IPausable.
 ///         - Pausable is a trusted contract upon assignment.
 ///         - Pausable can become malicious later.
-///         - Pauser is a DAO-approved multisig committee upon assignment.
+///         - Pauser is an admin-approved multisig committee upon assignment.
 ///         - Pauser can become malicious later.
 ///         - Pauser can lose access to keys later.
 ///         - Pauser can make mistakes.
@@ -45,23 +45,18 @@ contract CircuitBreaker {
     // =========================================================================
 
     /// @notice Admin address.
-    ///         Assumed to be a DAO agent or other DAO-authorized executor
     address public immutable ADMIN;
 
     /// @notice Inclusive lower bound for pauseDuration in seconds.
-    ///         Configurable for different networks.
     uint256 public immutable MIN_PAUSE_DURATION;
 
     /// @notice Inclusive upper bound for pauseDuration in seconds.
-    ///         Configurable for different networks.
     uint256 public immutable MAX_PAUSE_DURATION;
 
     /// @notice Inclusive lower bound for heartbeatInterval in seconds.
-    ///         Configurable for different networks.
     uint256 public immutable MIN_HEARTBEAT_INTERVAL;
 
     /// @notice Inclusive upper bound for heartbeatInterval in seconds.
-    ///         Configurable for different networks.
     uint256 public immutable MAX_HEARTBEAT_INTERVAL;
 
     // =========================================================================
