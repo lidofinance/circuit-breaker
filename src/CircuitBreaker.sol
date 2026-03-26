@@ -102,18 +102,18 @@ contract CircuitBreaker {
 
     error SenderNotAdmin();
     error SenderNotPauser();
-    
+
     error AdminIsZero();
     error PausableIsZero();
 
     error MinPauseDurationIsZero();
     error MaxPauseDurationIsZero();
     error MinPauseDurationExceedsMax();
-    
+
     error PauseDurationBelowMin();
     error PauseDurationAboveMax();
     error PauseDurationUnchanged();
-    
+
     error MinHeartbeatIntervalIsZero();
     error MaxHeartbeatIntervalIsZero();
     error MinHeartbeatIntervalExceedsMax();
@@ -221,7 +221,7 @@ contract CircuitBreaker {
     ///         Does not verify pausable implements the correct interface.
     function setPauser(address _pausable, address _pauser) external onlyAdmin {
         _setPauser(_pausable, _pauser);
-        
+
         if (_pauser != address(0)) _updateHeartbeat(_pauser);
     }
 
