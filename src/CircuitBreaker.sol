@@ -240,7 +240,7 @@ contract CircuitBreaker {
     }
 
     /// @notice Pause a pausable contract.
-    ///         - Updated heartbeat.
+    ///         - Updates heartbeat.
     ///         - Assumes pausable implements the correct interface.
     ///         - Assumes CircuitBreaker has the pause role for the pausable.
     /// @param  _pausable Pausable contract to pause.
@@ -266,7 +266,7 @@ contract CircuitBreaker {
         emit HeartbeatUpdated(_pauser);
     }
 
-   function _setPauser(address _pausable, address _pauser) internal {
+    function _setPauser(address _pausable, address _pauser) internal {
         require(_pausable != address(0), PausableIsZero());
 
         address previousPauser = getPauser[_pausable];
