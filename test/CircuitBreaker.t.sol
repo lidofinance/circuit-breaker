@@ -188,14 +188,26 @@ contract CircuitBreakerTest is Test {
     function test_Constructor_RevertIf_ZeroMinPauseDuration() public {
         vm.expectRevert(CircuitBreaker.MinPauseDurationIsZero.selector);
         new CircuitBreaker(
-            admin, 0, MAX_PAUSE_DURATION, MIN_HEARTBEAT_INTERVAL, MAX_HEARTBEAT_INTERVAL, PAUSE_DURATION, HEARTBEAT_INTERVAL
+            admin,
+            0,
+            MAX_PAUSE_DURATION,
+            MIN_HEARTBEAT_INTERVAL,
+            MAX_HEARTBEAT_INTERVAL,
+            PAUSE_DURATION,
+            HEARTBEAT_INTERVAL
         );
     }
 
     function test_Constructor_RevertIf_ZeroMaxPauseDuration() public {
         vm.expectRevert(CircuitBreaker.MaxPauseDurationIsZero.selector);
         new CircuitBreaker(
-            admin, MIN_PAUSE_DURATION, 0, MIN_HEARTBEAT_INTERVAL, MAX_HEARTBEAT_INTERVAL, PAUSE_DURATION, HEARTBEAT_INTERVAL
+            admin,
+            MIN_PAUSE_DURATION,
+            0,
+            MIN_HEARTBEAT_INTERVAL,
+            MAX_HEARTBEAT_INTERVAL,
+            PAUSE_DURATION,
+            HEARTBEAT_INTERVAL
         );
     }
 
