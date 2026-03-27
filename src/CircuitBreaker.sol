@@ -17,7 +17,7 @@ interface IPausable {
 /// @author Lido
 /// @notice Emergency pause manager for pausable contracts.
 /// @dev    Some setups (e.g. a DAO with on-chain voting) cannot respond fast enough
-///         to active exploits. This contract lets the admin delegate pause authority to
+///         in emergency situations. This contract lets the admin delegate pause authority to
 ///         designated pausers that can act instantly.
 ///
 ///         Design:
@@ -28,17 +28,10 @@ interface IPausable {
 ///         - Periodic heartbeat required to pause. A committee that cannot prove liveness
 ///           should not be trusted to respond in an emergency.
 ///
-///         Assumptions:
+///         Trust assumptions:
 ///         - Admin is always honest.
-///         - Admin can make mistakes.
-///         - Pausable implements IPausable.
 ///         - Pausable is a trusted contract upon assignment.
-///         - Pausable can become malicious later.
-///         - Pauser is an admin-approved multisig committee upon assignment.
-///         - Pauser can become malicious later.
-///         - Pauser can lose access to keys later.
-///         - Pauser can make mistakes.
-///         - CircuitBreaker has necessary pause roles upon trigger.
+///         - Pauser is a trusted multisig committee upon assignment.
 contract CircuitBreaker {
     // =========================================================================
     // Immutables
@@ -66,13 +59,13 @@ contract CircuitBreaker {
     /// @notice Duration in seconds of the pause applied to the pausable on trigger.
     uint256 public pauseDuration;
 
-    /// @notice Timeframe in seconds added to the current timestamp on heartbeat to compute the expiry.
+    /// @notice Time window in seconds since last heartbeat within which a pauser is considered active.
     uint256 public heartbeatInterval;
 
-    /// @notice Per-pausable pauser address.
+    /// @notice Pauser address responsible for the pausable contract.
     mapping(address pausable => address pauser) public getPauser;
 
-    /// @notice Timestamp after which a pauser is no longer eligible to pause or refresh.
+    /// @notice Timestamp after which a pauser is no longer eligible to heartbeat or pause.
     mapping(address pauser => uint256 timestamp) public getHeartbeatExpiry;
 
     /// @dev Cross-pausable reentrancy guard.
@@ -147,10 +140,10 @@ contract CircuitBreaker {
     // =========================================================================
 
     /// @param _admin                 Admin address.
-    /// @param _minPauseDuration      Lower bound for pause duration.
-    /// @param _maxPauseDuration      Upper bound for pause duration.
-    /// @param _minHeartbeatInterval  Lower bound for heartbeat interval.
-    /// @param _maxHeartbeatInterval  Upper bound for heartbeat interval.
+    /// @param _minPauseDuration      Inclusive lower bound for pause duration.
+    /// @param _maxPauseDuration      Inclusive upper bound for pause duration.
+    /// @param _minHeartbeatInterval  Inclusive lower bound for heartbeat interval.
+    /// @param _maxHeartbeatInterval  Inclusive upper bound for heartbeat interval.
     /// @param _pauseDuration         Initial pause duration.
     /// @param _heartbeatInterval     Initial heartbeat interval.
     constructor(
