@@ -62,13 +62,7 @@ contract ConstructorTest is TestBase {
     function test_MinEqualsMaxHeartbeatInterval() public {
         uint256 fixedInterval = 60 days;
         CircuitBreaker fresh = new CircuitBreaker(
-            admin,
-            MIN_PAUSE_DURATION,
-            MAX_PAUSE_DURATION,
-            fixedInterval,
-            fixedInterval,
-            PAUSE_DURATION,
-            fixedInterval
+            admin, MIN_PAUSE_DURATION, MAX_PAUSE_DURATION, fixedInterval, fixedInterval, PAUSE_DURATION, fixedInterval
         );
 
         assertEq(fresh.MIN_HEARTBEAT_INTERVAL(), fixedInterval);
@@ -96,14 +90,26 @@ contract ConstructorTest is TestBase {
     function test_RevertIf_ZeroMinPauseDuration() public {
         vm.expectRevert(CircuitBreaker.MinPauseDurationIsZero.selector);
         new CircuitBreaker(
-            admin, 0, MAX_PAUSE_DURATION, MIN_HEARTBEAT_INTERVAL, MAX_HEARTBEAT_INTERVAL, PAUSE_DURATION, HEARTBEAT_INTERVAL
+            admin,
+            0,
+            MAX_PAUSE_DURATION,
+            MIN_HEARTBEAT_INTERVAL,
+            MAX_HEARTBEAT_INTERVAL,
+            PAUSE_DURATION,
+            HEARTBEAT_INTERVAL
         );
     }
 
     function test_RevertIf_ZeroMaxPauseDuration() public {
         vm.expectRevert(CircuitBreaker.MaxPauseDurationIsZero.selector);
         new CircuitBreaker(
-            admin, MIN_PAUSE_DURATION, 0, MIN_HEARTBEAT_INTERVAL, MAX_HEARTBEAT_INTERVAL, PAUSE_DURATION, HEARTBEAT_INTERVAL
+            admin,
+            MIN_PAUSE_DURATION,
+            0,
+            MIN_HEARTBEAT_INTERVAL,
+            MAX_HEARTBEAT_INTERVAL,
+            PAUSE_DURATION,
+            HEARTBEAT_INTERVAL
         );
     }
 
