@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.34;
 
+import {PauserRegistryManager} from "./PauserRegistryManager.sol";
+
 /// @title  IPausable
 /// @notice Interface pausable contracts must implement for CircuitBreaker compatibility.
 interface IPausable {
@@ -30,9 +32,11 @@ interface IPausable {
 ///
 ///         Trust assumptions:
 ///         - Admin is always honest.
-///         - Pausable is a trusted contract upon assignment.
-///         - Pauser is a trusted multisig committee upon assignment.
+///         - Pausable is a trusted contract upon registration.
+///         - Pauser is a trusted multisig committee upon registration.
 contract CircuitBreaker {
+    using PauserRegistryManager for PauserRegistryManager.PauserRegistry;
+
     // =========================================================================
     // Immutables
     // =========================================================================
@@ -62,11 +66,11 @@ contract CircuitBreaker {
     /// @notice Time window in seconds since last heartbeat within which a pauser is considered active.
     uint256 public heartbeatInterval;
 
-    /// @notice Pauser address responsible for the pausable contract.
-    mapping(address pausable => address pauser) public getPauser;
+    /// @notice Pauser registry tracking pausable-to-pauser registrations.
+    PauserRegistryManager.PauserRegistry internal registry;
 
     /// @notice Timestamp after which a pauser is no longer eligible to heartbeat or pause.
-    mapping(address pauser => uint256 timestamp) public getHeartbeatExpiry;
+    mapping(address pauser => uint256 timestamp) public heartbeatExpiry;
 
     /// @dev Cross-pausable reentrancy guard.
     bool transient lock;
@@ -83,7 +87,6 @@ contract CircuitBreaker {
         uint256 maxHeartbeatInterval
     );
 
-    event PauserSet(address indexed pausable, address indexed previousPauser, address indexed pauser);
     event PauseDurationUpdated(uint256 previousPauseDuration, uint256 pauseDuration);
     event HeartbeatIntervalUpdated(uint256 previousHeartbeatInterval, uint256 heartbeatInterval);
     event HeartbeatUpdated(address indexed pauser);
@@ -97,7 +100,6 @@ contract CircuitBreaker {
     error SenderNotPauser();
 
     error AdminIsZero();
-    error PausableIsZero();
 
     error MinPauseDurationIsZero();
     error MaxPauseDurationIsZero();
@@ -181,10 +183,32 @@ contract CircuitBreaker {
     // View functions
     // =========================================================================
 
+    /// @notice Return the pauser registered for a pausable.
+    /// @param  _pausable Pausable contract address.
+    function getPauser(address _pausable) external view returns (address) {
+        return registry.get(_pausable);
+    }
+
+    /// @notice Return all unique pauser addresses currently registered.
+    function getPausers() external view returns (address[] memory) {
+        return registry.getAll();
+    }
+
+    /// @notice Return the number of unique pausers currently registered.
+    function getPauserCount() external view returns (uint256) {
+        return registry.count();
+    }
+
+    /// @notice Return the number of pausables a pauser is currently registered for.
+    /// @param  _pauser Pauser address.
+    function getPausableCount(address _pauser) external view returns (uint256) {
+        return registry.pausableCount[_pauser];
+    }
+
     /// @notice Return whether a pauser can pause or heartbeat at the moment.
     /// @param  _pauser Pauser address.
     function isPauserActive(address _pauser) public view returns (bool) {
-        return block.timestamp <= getHeartbeatExpiry[_pauser];
+        return block.timestamp <= heartbeatExpiry[_pauser];
     }
 
     // =========================================================================
@@ -205,17 +229,17 @@ contract CircuitBreaker {
         _setHeartbeatInterval(_heartbeatInterval);
     }
 
-    /// @notice Assign, replace, or remove a pauser for a pausable.
+    /// @notice Register, replace, or unregister a pauser for a pausable.
     ///         - Previous pauser will be overwritten.
-    ///         - Heartbeat updated on assignment.
+    ///         - Heartbeat updated on registration.
     /// @param  _pausable Pausable contract address.
-    /// @param  _pauser New pauser address. Zero removes the pauser.
+    /// @param  _pauser New pauser address. Zero unregisters the pauser.
     /// @dev    Does not verify CircuitBreaker has pause permission on the pausable.
     ///         Does not verify pausable implements the correct interface.
     function setPauser(address _pausable, address _pauser) external onlyAdmin {
-        _setPauser(_pausable, _pauser);
+        registry.register(_pausable, _pauser);
 
-        if (_pauser != address(0)) _updateHeartbeat(_pauser);
+        if (_pauser != address(0)) _updateHeartbeat(_pauser, false);
     }
 
     // =========================================================================
@@ -223,13 +247,9 @@ contract CircuitBreaker {
     // =========================================================================
 
     /// @notice Record a liveness proof to remain authorized to pause.
-    /// @param  _pausable Pausable the caller is assigned to.
-    /// @dev    Requires pausable only for auth lookup, preventing unassigned callers.
-    function heartbeat(address _pausable) public {
-        require(msg.sender == getPauser[_pausable], SenderNotPauser());
-        require(isPauserActive(msg.sender), HeartbeatExpired());
-
-        _updateHeartbeat(msg.sender);
+    function heartbeat() public {
+        require(registry.contains(msg.sender), SenderNotPauser());
+        _updateHeartbeat(msg.sender, true);
     }
 
     /// @notice Pause a pausable contract.
@@ -238,12 +258,13 @@ contract CircuitBreaker {
     ///         - Assumes CircuitBreaker has the pause role for the pausable.
     /// @param  _pausable Pausable contract to pause.
     function pause(address _pausable) external nonReentrant {
-        heartbeat(_pausable);
+        require(msg.sender == registry.get(_pausable), SenderNotPauser());
+        _updateHeartbeat(msg.sender, true);
 
         uint256 duration = pauseDuration;
         IPausable pausable = IPausable(_pausable);
 
-        _setPauser(_pausable, address(0));
+        registry.unregister(_pausable);
         pausable.pauseFor(duration);
         require(pausable.isPaused(), PauseFailed());
 
@@ -254,18 +275,10 @@ contract CircuitBreaker {
     // Internal functions
     // =========================================================================
 
-    function _updateHeartbeat(address _pauser) internal {
-        getHeartbeatExpiry[_pauser] = block.timestamp + heartbeatInterval;
+    function _updateHeartbeat(address _pauser, bool _requireActive) internal {
+        if (_requireActive) require(isPauserActive(_pauser), HeartbeatExpired());
+        heartbeatExpiry[_pauser] = block.timestamp + heartbeatInterval;
         emit HeartbeatUpdated(_pauser);
-    }
-
-    function _setPauser(address _pausable, address _pauser) internal {
-        require(_pausable != address(0), PausableIsZero());
-
-        address previousPauser = getPauser[_pausable];
-        getPauser[_pausable] = _pauser;
-
-        emit PauserSet(_pausable, previousPauser, _pauser);
     }
 
     function _setPauseDuration(uint256 _pauseDuration) internal {

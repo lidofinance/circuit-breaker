@@ -1,0 +1,243 @@
+// SPDX-FileCopyrightText: 2026 Lido <info@lido.fi>
+// SPDX-License-Identifier: GPL-3.0
+pragma solidity 0.8.34;
+
+import {Vm} from "forge-std/Test.sol";
+import {CircuitBreaker} from "../src/CircuitBreaker.sol";
+import {PauserRegistryManager} from "../src/PauserRegistryManager.sol";
+import {TestBase, MockPausable} from "./helpers/TestBase.sol";
+
+contract PauserRegistryTest is TestBase {
+    // =========================================================================
+    // register
+    // =========================================================================
+
+    function test_RegistersAndEmits() public {
+        vm.expectEmit(true, true, true, true);
+        emit PauserRegistryManager.PauserChanged(address(mockPausable), address(0), pauser);
+        vm.expectEmit(true, false, false, true);
+        emit CircuitBreaker.HeartbeatUpdated(pauser);
+
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), pauser);
+
+        assertEq(cb.getPauser(address(mockPausable)), pauser);
+        assertEq(cb.heartbeatExpiry(pauser), block.timestamp + HEARTBEAT_INTERVAL);
+        assertEq(cb.getPauserCount(), 1);
+        assertEq(cb.getPausableCount(pauser), 1);
+
+        address[] memory pausers = cb.getPausers();
+        assertEq(pausers.length, 1);
+        assertEq(pausers[0], pauser);
+    }
+
+    // =========================================================================
+    // replace
+    // =========================================================================
+
+    function test_ReplacesAndEmits() public {
+        address pauser2 = makeAddr("pauser2");
+        _registerPauser(address(mockPausable), pauser);
+
+        vm.expectEmit(true, true, true, true);
+        emit PauserRegistryManager.PauserChanged(address(mockPausable), pauser, pauser2);
+        vm.expectEmit(true, false, false, true);
+        emit CircuitBreaker.HeartbeatUpdated(pauser2);
+
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), pauser2);
+
+        assertEq(cb.getPauser(address(mockPausable)), pauser2);
+        assertEq(cb.getPauserCount(), 1);
+        assertEq(cb.getPausableCount(pauser), 0);
+        assertEq(cb.getPausableCount(pauser2), 1);
+
+        address[] memory pausers = cb.getPausers();
+        assertEq(pausers.length, 1);
+        assertEq(pausers[0], pauser2);
+    }
+
+    function test_SamePauserReassignment() public {
+        _registerPauser(address(mockPausable), pauser);
+
+        vm.warp(block.timestamp + HEARTBEAT_INTERVAL / 2);
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), pauser);
+
+        assertEq(cb.heartbeatExpiry(pauser), block.timestamp + HEARTBEAT_INTERVAL);
+        assertEq(cb.getPauserCount(), 1);
+        assertEq(cb.getPausableCount(pauser), 1);
+    }
+
+    // =========================================================================
+    // unregister
+    // =========================================================================
+
+    function test_UnregistersAndEmits() public {
+        _registerPauser(address(mockPausable), pauser);
+
+        vm.expectEmit(true, true, true, true);
+        emit PauserRegistryManager.PauserChanged(address(mockPausable), pauser, address(0));
+
+        vm.recordLogs();
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), address(0));
+
+        assertEq(cb.getPauser(address(mockPausable)), address(0));
+        assertEq(cb.getPauserCount(), 0);
+        assertEq(cb.getPausableCount(pauser), 0);
+        assertEq(cb.getPausers().length, 0);
+
+        // No HeartbeatUpdated event when unregistering
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertTrue(logs[i].topics[0] != CircuitBreaker.HeartbeatUpdated.selector);
+        }
+    }
+
+    // =========================================================================
+    // multi-pausable pauser
+    // =========================================================================
+
+    function test_SamePauserMultiplePausables() public {
+        MockPausable mp2 = new MockPausable();
+        _registerPauser(address(mockPausable), pauser);
+        _registerPauser(address(mp2), pauser);
+
+        assertEq(cb.getPauserCount(), 1);
+        assertEq(cb.getPausableCount(pauser), 2);
+
+        address[] memory pausers = cb.getPausers();
+        assertEq(pausers.length, 1);
+        assertEq(pausers[0], pauser);
+    }
+
+    function test_RemoveFromOnePausable_StillRegisteredForAnother() public {
+        MockPausable mp2 = new MockPausable();
+        _registerPauser(address(mockPausable), pauser);
+        _registerPauser(address(mp2), pauser);
+
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), address(0));
+
+        assertEq(cb.getPauserCount(), 1);
+        assertEq(cb.getPausableCount(pauser), 1);
+        assertEq(cb.getPausers().length, 1);
+        assertEq(cb.getPausers()[0], pauser);
+    }
+
+    // =========================================================================
+    // swap-and-pop
+    // =========================================================================
+
+    function test_SwapAndPop_RemoveMiddle() public {
+        address pauser2 = makeAddr("pauser2");
+        address pauser3 = makeAddr("pauser3");
+        MockPausable mp2 = new MockPausable();
+        MockPausable mp3 = new MockPausable();
+
+        _registerPauser(address(mockPausable), pauser);
+        _registerPauser(address(mp2), pauser2);
+        _registerPauser(address(mp3), pauser3);
+
+        assertEq(cb.getPauserCount(), 3);
+
+        vm.prank(admin);
+        cb.setPauser(address(mp2), address(0));
+
+        assertEq(cb.getPauserCount(), 2);
+        address[] memory pausers = cb.getPausers();
+        assertEq(pausers.length, 2);
+        assertEq(pausers[0], pauser);
+        assertEq(pausers[1], pauser3);
+    }
+
+    function test_SwapAndPop_RemoveFirst() public {
+        address pauser2 = makeAddr("pauser2");
+        address pauser3 = makeAddr("pauser3");
+        MockPausable mp2 = new MockPausable();
+        MockPausable mp3 = new MockPausable();
+
+        _registerPauser(address(mockPausable), pauser);
+        _registerPauser(address(mp2), pauser2);
+        _registerPauser(address(mp3), pauser3);
+
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), address(0));
+
+        assertEq(cb.getPauserCount(), 2);
+        address[] memory pausers = cb.getPausers();
+        assertEq(pausers.length, 2);
+        assertEq(pausers[0], pauser3);
+        assertEq(pausers[1], pauser2);
+    }
+
+    function test_SwapAndPop_RemoveLast() public {
+        address pauser2 = makeAddr("pauser2");
+        address pauser3 = makeAddr("pauser3");
+        MockPausable mp2 = new MockPausable();
+        MockPausable mp3 = new MockPausable();
+
+        _registerPauser(address(mockPausable), pauser);
+        _registerPauser(address(mp2), pauser2);
+        _registerPauser(address(mp3), pauser3);
+
+        vm.prank(admin);
+        cb.setPauser(address(mp3), address(0));
+
+        assertEq(cb.getPauserCount(), 2);
+        address[] memory pausers = cb.getPausers();
+        assertEq(pausers.length, 2);
+        assertEq(pausers[0], pauser);
+        assertEq(pausers[1], pauser2);
+    }
+
+    function test_SwapAndPop_RemoveOnlyElement() public {
+        _registerPauser(address(mockPausable), pauser);
+
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), address(0));
+
+        assertEq(cb.getPauserCount(), 0);
+        assertEq(cb.getPausers().length, 0);
+    }
+
+    // =========================================================================
+    // re-register
+    // =========================================================================
+
+    function test_ReRegisterAfterFullRemoval() public {
+        _registerPauser(address(mockPausable), pauser);
+        vm.prank(admin);
+        cb.setPauser(address(mockPausable), address(0));
+
+        assertEq(cb.getPauserCount(), 0);
+
+        address pauser2 = makeAddr("pauser2");
+        _registerPauser(address(mockPausable), pauser2);
+
+        assertEq(cb.getPauser(address(mockPausable)), pauser2);
+        assertEq(cb.getPauserCount(), 1);
+        assertEq(cb.getPausers()[0], pauser2);
+
+        vm.prank(pauser2);
+        cb.pause(address(mockPausable));
+        assertTrue(mockPausable.isPaused());
+    }
+
+    // =========================================================================
+    // reverts
+    // =========================================================================
+
+    function test_RevertIf_ZeroPausable() public {
+        vm.expectRevert(PauserRegistryManager.PausableIsZero.selector);
+        vm.prank(admin);
+        cb.setPauser(address(0), pauser);
+    }
+
+    function test_RevertIf_SenderNotAdmin() public {
+        vm.expectRevert(CircuitBreaker.SenderNotAdmin.selector);
+        vm.prank(stranger);
+        cb.setPauser(address(mockPausable), pauser);
+    }
+}
