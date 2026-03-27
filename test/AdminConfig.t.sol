@@ -102,7 +102,33 @@ contract AdminConfigTest is TestBase {
         vm.prank(pauser);
         cb.heartbeat();
 
-        assertTrue(cb.isPauserActive(pauser));
+        assertTrue(cb.isPauserLive(pauser));
+    }
+
+    function test_SetHeartbeatInterval_ReductionWorstCaseWindow() public {
+        _registerPauser(address(mockPausable), pauser);
+
+        // Pauser heartbeats right before the interval reduction
+        vm.prank(pauser);
+        cb.heartbeat();
+        uint256 expiryBeforeReduction = cb.heartbeatExpiry(pauser);
+
+        // Admin drastically reduces interval: 365d -> 30d
+        vm.prank(admin);
+        cb.setHeartbeatInterval(MIN_HEARTBEAT_INTERVAL);
+
+        // Existing expiry is unchanged -- pauser stays live for the full original window
+        assertEq(cb.heartbeatExpiry(pauser), expiryBeforeReduction);
+        assertTrue(cb.isPauserLive(pauser));
+
+        // At the old expiry minus 1, pauser is still live (worst case)
+        vm.warp(expiryBeforeReduction - 1);
+        assertTrue(cb.isPauserLive(pauser));
+
+        // Pauser can still heartbeat, but now gets the new shorter interval
+        vm.prank(pauser);
+        cb.heartbeat();
+        assertEq(cb.heartbeatExpiry(pauser), block.timestamp + MIN_HEARTBEAT_INTERVAL);
     }
 
     function test_SetHeartbeatInterval_RevertIf_SenderNotAdmin() public {

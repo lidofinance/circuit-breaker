@@ -67,6 +67,6 @@ abstract contract TestBase is Test {
 
     function _registerPauser(address _pausable, address _pauser) internal {
         vm.prank(admin);
-        cb.setPauser(_pausable, _pauser);
+        cb.registerPauser(_pausable, _pauser);
     }
 }

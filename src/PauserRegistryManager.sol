@@ -13,6 +13,7 @@ library PauserRegistryManager {
     struct PauserRegistry {
         mapping(address pausable => address) pauser;
         mapping(address pauser => uint256) pausableCount;
+        /// @dev 1-based index into pausers array; 0 means not present.
         mapping(address pauser => uint256) index;
         address[] pausers;
     }
@@ -72,12 +73,6 @@ library PauserRegistryManager {
         if (_pauser != address(0)) _addPauser(_self, _pauser);
 
         emit PauserChanged(_pausable, previousPauser, _pauser);
-    }
-
-    /// @notice Unregister the pauser for a pausable.
-    /// @param  _pausable Pausable contract address.
-    function unregister(PauserRegistry storage _self, address _pausable) internal {
-        register(_self, _pausable, address(0));
     }
 
     // =========================================================================

@@ -37,6 +37,49 @@ contract ConstructorTest is TestBase {
         assertEq(fresh.getPausers().length, 0);
     }
 
+    function test_MinEqualsMaxPauseDuration() public {
+        uint256 fixedDuration = 7 days;
+        CircuitBreaker fresh = new CircuitBreaker(
+            admin,
+            fixedDuration,
+            fixedDuration,
+            MIN_HEARTBEAT_INTERVAL,
+            MAX_HEARTBEAT_INTERVAL,
+            fixedDuration,
+            HEARTBEAT_INTERVAL
+        );
+
+        assertEq(fresh.MIN_PAUSE_DURATION(), fixedDuration);
+        assertEq(fresh.MAX_PAUSE_DURATION(), fixedDuration);
+        assertEq(fresh.pauseDuration(), fixedDuration);
+
+        // Cannot change pause duration since min == max == current
+        vm.expectRevert(CircuitBreaker.PauseDurationUnchanged.selector);
+        vm.prank(admin);
+        fresh.setPauseDuration(fixedDuration);
+    }
+
+    function test_MinEqualsMaxHeartbeatInterval() public {
+        uint256 fixedInterval = 60 days;
+        CircuitBreaker fresh = new CircuitBreaker(
+            admin,
+            MIN_PAUSE_DURATION,
+            MAX_PAUSE_DURATION,
+            fixedInterval,
+            fixedInterval,
+            PAUSE_DURATION,
+            fixedInterval
+        );
+
+        assertEq(fresh.MIN_HEARTBEAT_INTERVAL(), fixedInterval);
+        assertEq(fresh.MAX_HEARTBEAT_INTERVAL(), fixedInterval);
+        assertEq(fresh.heartbeatInterval(), fixedInterval);
+
+        vm.expectRevert(CircuitBreaker.HeartbeatIntervalUnchanged.selector);
+        vm.prank(admin);
+        fresh.setHeartbeatInterval(fixedInterval);
+    }
+
     function test_RevertIf_ZeroAdmin() public {
         vm.expectRevert(CircuitBreaker.AdminIsZero.selector);
         new CircuitBreaker(

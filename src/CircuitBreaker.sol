@@ -89,7 +89,7 @@ contract CircuitBreaker {
 
     event PauseDurationUpdated(uint256 previousPauseDuration, uint256 pauseDuration);
     event HeartbeatIntervalUpdated(uint256 previousHeartbeatInterval, uint256 heartbeatInterval);
-    event HeartbeatUpdated(address indexed pauser);
+    event HeartbeatUpdated(address indexed pauser, uint256 heartbeatExpiry);
     event PauseTriggered(address indexed pausable, address indexed pauser, uint256 pauseDuration);
 
     // =========================================================================
@@ -205,10 +205,11 @@ contract CircuitBreaker {
         return registry.pausableCount[_pauser];
     }
 
-    /// @notice Return whether a pauser can pause or heartbeat at the moment.
+    /// @notice Return whether a pauser's heartbeat window is still valid.
+    /// @dev    Only checks the heartbeat expiry, not registration.
     /// @param  _pauser Pauser address.
-    function isPauserActive(address _pauser) public view returns (bool) {
-        return block.timestamp <= heartbeatExpiry[_pauser];
+    function isPauserLive(address _pauser) public view returns (bool) {
+        return block.timestamp < heartbeatExpiry[_pauser];
     }
 
     // =========================================================================
@@ -236,7 +237,7 @@ contract CircuitBreaker {
     /// @param  _pauser New pauser address. Zero unregisters the pauser.
     /// @dev    Does not verify CircuitBreaker has pause permission on the pausable.
     ///         Does not verify pausable implements the correct interface.
-    function setPauser(address _pausable, address _pauser) external onlyAdmin {
+    function registerPauser(address _pausable, address _pauser) external onlyAdmin {
         registry.register(_pausable, _pauser);
 
         if (_pauser != address(0)) _updateHeartbeat(_pauser, false);
@@ -264,7 +265,7 @@ contract CircuitBreaker {
         uint256 duration = pauseDuration;
         IPausable pausable = IPausable(_pausable);
 
-        registry.unregister(_pausable);
+        registry.register(_pausable, address(0));
         pausable.pauseFor(duration);
         require(pausable.isPaused(), PauseFailed());
 
@@ -276,9 +277,10 @@ contract CircuitBreaker {
     // =========================================================================
 
     function _updateHeartbeat(address _pauser, bool _requireActive) internal {
-        if (_requireActive) require(isPauserActive(_pauser), HeartbeatExpired());
-        heartbeatExpiry[_pauser] = block.timestamp + heartbeatInterval;
-        emit HeartbeatUpdated(_pauser);
+        if (_requireActive) require(isPauserLive(_pauser), HeartbeatExpired());
+        uint256 expiry = block.timestamp + heartbeatInterval;
+        heartbeatExpiry[_pauser] = expiry;
+        emit HeartbeatUpdated(_pauser, expiry);
     }
 
     function _setPauseDuration(uint256 _pauseDuration) internal {

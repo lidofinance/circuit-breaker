@@ -86,7 +86,7 @@ contract PauseTest is TestBase {
         uint256 ts = block.timestamp;
 
         vm.expectEmit(true, false, false, true);
-        emit CircuitBreaker.HeartbeatUpdated(pauser);
+        emit CircuitBreaker.HeartbeatUpdated(pauser, ts + HEARTBEAT_INTERVAL);
         vm.expectEmit(true, true, true, true);
         emit PauserRegistryManager.PauserChanged(address(mockPausable), pauser, address(0));
         vm.expectEmit(true, true, false, true);
@@ -227,7 +227,7 @@ contract PauseTest is TestBase {
         _registerPauser(address(mockPausable), pauser);
 
         vm.prank(admin);
-        cb.setPauser(address(mockPausable), address(0));
+        cb.registerPauser(address(mockPausable), address(0));
 
         vm.expectRevert(CircuitBreaker.SenderNotPauser.selector);
         vm.prank(pauser);

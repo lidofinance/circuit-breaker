@@ -17,16 +17,25 @@ contract HeartbeatTest is TestBase {
         uint256 ts = block.timestamp;
 
         vm.expectEmit(true, false, false, true);
-        emit CircuitBreaker.HeartbeatUpdated(pauser);
+        emit CircuitBreaker.HeartbeatUpdated(pauser, ts + HEARTBEAT_INTERVAL);
         vm.prank(pauser);
         cb.heartbeat();
 
         assertEq(cb.heartbeatExpiry(pauser), ts + HEARTBEAT_INTERVAL);
     }
 
-    function test_SucceedsAtExactExpiryBoundary() public {
+    function test_RevertsAtExactExpiryBoundary() public {
         _registerPauser(address(mockPausable), pauser);
         vm.warp(block.timestamp + HEARTBEAT_INTERVAL);
+
+        vm.expectRevert(CircuitBreaker.HeartbeatExpired.selector);
+        vm.prank(pauser);
+        cb.heartbeat();
+    }
+
+    function test_SucceedsOneSecondBeforeExpiry() public {
+        _registerPauser(address(mockPausable), pauser);
+        vm.warp(block.timestamp + HEARTBEAT_INTERVAL - 1);
 
         vm.prank(pauser);
         cb.heartbeat();
@@ -116,21 +125,33 @@ contract HeartbeatTest is TestBase {
     }
 
     // =========================================================================
-    // isPauserActive
+    // isPauserLive
     // =========================================================================
 
     function test_IsPauserActive() public {
         _registerPauser(address(mockPausable), pauser);
-        assertTrue(cb.isPauserActive(pauser));
+        assertTrue(cb.isPauserLive(pauser));
 
-        vm.warp(block.timestamp + HEARTBEAT_INTERVAL);
-        assertTrue(cb.isPauserActive(pauser));
+        vm.warp(block.timestamp + HEARTBEAT_INTERVAL - 1);
+        assertTrue(cb.isPauserLive(pauser));
 
         vm.warp(block.timestamp + 1);
-        assertFalse(cb.isPauserActive(pauser));
+        assertFalse(cb.isPauserLive(pauser));
+    }
+
+    function test_IsPauserLive_TrueForUnregisteredPauserWithStaleExpiry() public {
+        _registerPauser(address(mockPausable), pauser);
+        assertTrue(cb.isPauserLive(pauser));
+
+        // Admin unregisters, but expiry remains
+        vm.prank(admin);
+        cb.registerPauser(address(mockPausable), address(0));
+
+        assertEq(cb.getPausableCount(pauser), 0);
+        assertTrue(cb.isPauserLive(pauser));
     }
 
     function test_IsPauserActive_UnknownAddressReturnsFalse() public view {
-        assertFalse(cb.isPauserActive(stranger));
+        assertFalse(cb.isPauserLive(stranger));
     }
 }
