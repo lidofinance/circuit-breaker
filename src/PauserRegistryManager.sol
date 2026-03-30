@@ -69,35 +69,28 @@ library PauserRegistryManager {
         address previousPauser = _self.pauser[_pausable];
         _self.pauser[_pausable] = _pauser;
 
-        if (previousPauser != address(0)) _removePauser(_self, previousPauser);
-        if (_pauser != address(0)) _addPauser(_self, _pauser);
+        // Remove previous pauser from the set if no longer registered for any pausable.
+        if (previousPauser != address(0)) {
+            if (--_self.pausableCount[previousPauser] == 0) {
+                uint256 idx = _self.index[previousPauser];
+                address last = _self.pausers[_self.pausers.length - 1];
+
+                _self.pausers[idx - 1] = last;
+                _self.index[last] = idx;
+
+                _self.pausers.pop();
+                delete _self.index[previousPauser];
+            }
+        }
+
+        // Add new pauser to the set if not already present.
+        if (_pauser != address(0)) {
+            if (_self.pausableCount[_pauser]++ == 0) {
+                _self.pausers.push(_pauser);
+                _self.index[_pauser] = _self.pausers.length;
+            }
+        }
 
         emit PauserChanged(_pausable, previousPauser, _pauser);
-    }
-
-    // =========================================================================
-    // Private functions
-    // =========================================================================
-
-    /// @dev Add pauser to the set if not already present.
-    function _addPauser(PauserRegistry storage _self, address _pauser) private {
-        if (_self.pausableCount[_pauser]++ == 0) {
-            _self.pausers.push(_pauser);
-            _self.index[_pauser] = _self.pausers.length;
-        }
-    }
-
-    /// @dev Remove pauser from the set if no longer registered for any pausable.
-    function _removePauser(PauserRegistry storage _self, address _pauser) private {
-        if (--_self.pausableCount[_pauser] == 0) {
-            uint256 idx = _self.index[_pauser];
-            address last = _self.pausers[_self.pausers.length - 1];
-
-            _self.pausers[idx - 1] = last;
-            _self.index[last] = idx;
-
-            _self.pausers.pop();
-            delete _self.index[_pauser];
-        }
     }
 }
