@@ -66,11 +66,11 @@ contract CircuitBreaker {
     /// @notice Time window in seconds since last heartbeat within which a pauser is considered active.
     uint256 public heartbeatInterval;
 
-    /// @notice Pauser registry tracking pausable-to-pauser registrations.
-    PauserRegistryManager.PauserRegistry internal registry;
-
     /// @notice Timestamp after which a pauser is no longer eligible to heartbeat or pause.
     mapping(address pauser => uint256 timestamp) public heartbeatExpiry;
+
+    /// @notice Pauser registry tracking pausable-to-pauser registrations.
+    PauserRegistryManager.PauserRegistry internal registry;
 
     /// @dev Cross-pausable reentrancy guard.
     bool transient lock;
