@@ -88,7 +88,7 @@ contract PauseTest is TestBase {
         vm.expectEmit(true, false, false, true);
         emit CircuitBreaker.HeartbeatUpdated(pauser, ts + HEARTBEAT_INTERVAL);
         vm.expectEmit(true, true, true, true);
-        emit PauserRegistry.PauserRegistered(address(mockPausable), pauser, address(0));
+        emit PauserRegistry.PauserSet(address(mockPausable), pauser, address(0));
         vm.expectEmit(true, true, false, true);
         emit CircuitBreaker.PauseTriggered(address(mockPausable), pauser, PAUSE_DURATION);
 
@@ -99,9 +99,8 @@ contract PauseTest is TestBase {
         assertEq(mockPausable.getResumeSinceTimestamp(), ts + PAUSE_DURATION);
         assertEq(cb.getPauser(address(mockPausable)), address(0));
         assertEq(cb.heartbeatExpiry(pauser), ts + HEARTBEAT_INTERVAL);
-        assertEq(cb.getPauserCount(), 0);
         assertEq(cb.getPausableCount(pauser), 0);
-        assertEq(cb.getPausers().length, 0);
+        assertEq(cb.getPausables().length, 0);
     }
 
     function test_SingleUse() public {
@@ -143,15 +142,15 @@ contract PauseTest is TestBase {
 
         assertEq(cb.getPauser(address(mockPausable)), address(0));
         assertEq(cb.getPauser(address(mp2)), pauser);
-        assertEq(cb.getPauserCount(), 1);
         assertEq(cb.getPausableCount(pauser), 1);
+        assertEq(cb.getPausables().length, 1);
 
         vm.prank(pauser);
         cb.pause(address(mp2));
 
         assertTrue(mp2.isPaused());
-        assertEq(cb.getPauserCount(), 0);
         assertEq(cb.getPausableCount(pauser), 0);
+        assertEq(cb.getPausables().length, 0);
     }
 
     function test_CrossPausableHeartbeatThenPause() public {
@@ -192,7 +191,7 @@ contract PauseTest is TestBase {
     // reverts
     // =========================================================================
 
-    function test_RevertIf_NoPauserRegistered() public {
+    function test_RevertIf_NoPauserSet() public {
         vm.expectRevert(CircuitBreaker.SenderNotPauser.selector);
         vm.prank(pauser);
         cb.pause(address(mockPausable));

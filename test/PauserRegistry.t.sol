@@ -14,7 +14,7 @@ contract PauserRegistryTest is TestBase {
 
     function test_RegistersAndEmits() public {
         vm.expectEmit(true, true, true, true);
-        emit PauserRegistry.PauserRegistered(address(mockPausable), address(0), pauser);
+        emit PauserRegistry.PauserSet(address(mockPausable), address(0), pauser);
         vm.expectEmit(true, false, false, true);
         emit CircuitBreaker.HeartbeatUpdated(pauser, block.timestamp + HEARTBEAT_INTERVAL);
 
@@ -23,12 +23,11 @@ contract PauserRegistryTest is TestBase {
 
         assertEq(cb.getPauser(address(mockPausable)), pauser);
         assertEq(cb.heartbeatExpiry(pauser), block.timestamp + HEARTBEAT_INTERVAL);
-        assertEq(cb.getPauserCount(), 1);
         assertEq(cb.getPausableCount(pauser), 1);
 
-        address[] memory pausers = cb.getPausers();
-        assertEq(pausers.length, 1);
-        assertEq(pausers[0], pauser);
+        address[] memory pausables = cb.getPausables();
+        assertEq(pausables.length, 1);
+        assertEq(pausables[0], address(mockPausable));
     }
 
     // =========================================================================
@@ -40,7 +39,7 @@ contract PauserRegistryTest is TestBase {
         _registerPauser(address(mockPausable), pauser);
 
         vm.expectEmit(true, true, true, true);
-        emit PauserRegistry.PauserRegistered(address(mockPausable), pauser, pauser2);
+        emit PauserRegistry.PauserSet(address(mockPausable), pauser, pauser2);
         vm.expectEmit(true, false, false, true);
         emit CircuitBreaker.HeartbeatUpdated(pauser2, block.timestamp + HEARTBEAT_INTERVAL);
 
@@ -48,13 +47,12 @@ contract PauserRegistryTest is TestBase {
         cb.registerPauser(address(mockPausable), pauser2);
 
         assertEq(cb.getPauser(address(mockPausable)), pauser2);
-        assertEq(cb.getPauserCount(), 1);
         assertEq(cb.getPausableCount(pauser), 0);
         assertEq(cb.getPausableCount(pauser2), 1);
 
-        address[] memory pausers = cb.getPausers();
-        assertEq(pausers.length, 1);
-        assertEq(pausers[0], pauser2);
+        address[] memory pausables = cb.getPausables();
+        assertEq(pausables.length, 1);
+        assertEq(pausables[0], address(mockPausable));
     }
 
     function test_SamePauserReassignment() public {
@@ -65,8 +63,8 @@ contract PauserRegistryTest is TestBase {
         cb.registerPauser(address(mockPausable), pauser);
 
         assertEq(cb.heartbeatExpiry(pauser), block.timestamp + HEARTBEAT_INTERVAL);
-        assertEq(cb.getPauserCount(), 1);
         assertEq(cb.getPausableCount(pauser), 1);
+        assertEq(cb.getPausables().length, 1);
     }
 
     // =========================================================================
@@ -77,16 +75,15 @@ contract PauserRegistryTest is TestBase {
         _registerPauser(address(mockPausable), pauser);
 
         vm.expectEmit(true, true, true, true);
-        emit PauserRegistry.PauserRegistered(address(mockPausable), pauser, address(0));
+        emit PauserRegistry.PauserSet(address(mockPausable), pauser, address(0));
 
         vm.recordLogs();
         vm.prank(admin);
         cb.registerPauser(address(mockPausable), address(0));
 
         assertEq(cb.getPauser(address(mockPausable)), address(0));
-        assertEq(cb.getPauserCount(), 0);
         assertEq(cb.getPausableCount(pauser), 0);
-        assertEq(cb.getPausers().length, 0);
+        assertEq(cb.getPausables().length, 0);
 
         // No HeartbeatUpdated event when unregistering
         Vm.Log[] memory logs = vm.getRecordedLogs();
@@ -104,12 +101,12 @@ contract PauserRegistryTest is TestBase {
         _registerPauser(address(mockPausable), pauser);
         _registerPauser(address(mp2), pauser);
 
-        assertEq(cb.getPauserCount(), 1);
         assertEq(cb.getPausableCount(pauser), 2);
 
-        address[] memory pausers = cb.getPausers();
-        assertEq(pausers.length, 1);
-        assertEq(pausers[0], pauser);
+        address[] memory pausables = cb.getPausables();
+        assertEq(pausables.length, 2);
+        assertEq(pausables[0], address(mockPausable));
+        assertEq(pausables[1], address(mp2));
     }
 
     function test_RemoveFromOnePausable_StillRegisteredForAnother() public {
@@ -120,10 +117,9 @@ contract PauserRegistryTest is TestBase {
         vm.prank(admin);
         cb.registerPauser(address(mockPausable), address(0));
 
-        assertEq(cb.getPauserCount(), 1);
         assertEq(cb.getPausableCount(pauser), 1);
-        assertEq(cb.getPausers().length, 1);
-        assertEq(cb.getPausers()[0], pauser);
+        assertEq(cb.getPausables().length, 1);
+        assertEq(cb.getPausables()[0], address(mp2));
     }
 
     // =========================================================================
@@ -140,16 +136,15 @@ contract PauserRegistryTest is TestBase {
         _registerPauser(address(mp2), pauser2);
         _registerPauser(address(mp3), pauser3);
 
-        assertEq(cb.getPauserCount(), 3);
+        assertEq(cb.getPausables().length, 3);
 
         vm.prank(admin);
         cb.registerPauser(address(mp2), address(0));
 
-        assertEq(cb.getPauserCount(), 2);
-        address[] memory pausers = cb.getPausers();
-        assertEq(pausers.length, 2);
-        assertEq(pausers[0], pauser);
-        assertEq(pausers[1], pauser3);
+        address[] memory pausables = cb.getPausables();
+        assertEq(pausables.length, 2);
+        assertEq(pausables[0], address(mockPausable));
+        assertEq(pausables[1], address(mp3));
     }
 
     function test_SwapAndPop_RemoveFirst() public {
@@ -165,11 +160,10 @@ contract PauserRegistryTest is TestBase {
         vm.prank(admin);
         cb.registerPauser(address(mockPausable), address(0));
 
-        assertEq(cb.getPauserCount(), 2);
-        address[] memory pausers = cb.getPausers();
-        assertEq(pausers.length, 2);
-        assertEq(pausers[0], pauser3);
-        assertEq(pausers[1], pauser2);
+        address[] memory pausables = cb.getPausables();
+        assertEq(pausables.length, 2);
+        assertEq(pausables[0], address(mp3));
+        assertEq(pausables[1], address(mp2));
     }
 
     function test_SwapAndPop_RemoveLast() public {
@@ -185,11 +179,10 @@ contract PauserRegistryTest is TestBase {
         vm.prank(admin);
         cb.registerPauser(address(mp3), address(0));
 
-        assertEq(cb.getPauserCount(), 2);
-        address[] memory pausers = cb.getPausers();
-        assertEq(pausers.length, 2);
-        assertEq(pausers[0], pauser);
-        assertEq(pausers[1], pauser2);
+        address[] memory pausables = cb.getPausables();
+        assertEq(pausables.length, 2);
+        assertEq(pausables[0], address(mockPausable));
+        assertEq(pausables[1], address(mp2));
     }
 
     function test_SwapAndPop_RemoveOnlyElement() public {
@@ -198,8 +191,7 @@ contract PauserRegistryTest is TestBase {
         vm.prank(admin);
         cb.registerPauser(address(mockPausable), address(0));
 
-        assertEq(cb.getPauserCount(), 0);
-        assertEq(cb.getPausers().length, 0);
+        assertEq(cb.getPausables().length, 0);
     }
 
     // =========================================================================
@@ -211,14 +203,14 @@ contract PauserRegistryTest is TestBase {
         vm.prank(admin);
         cb.registerPauser(address(mockPausable), address(0));
 
-        assertEq(cb.getPauserCount(), 0);
+        assertEq(cb.getPausables().length, 0);
 
         address pauser2 = makeAddr("pauser2");
         _registerPauser(address(mockPausable), pauser2);
 
         assertEq(cb.getPauser(address(mockPausable)), pauser2);
-        assertEq(cb.getPauserCount(), 1);
-        assertEq(cb.getPausers()[0], pauser2);
+        assertEq(cb.getPausables().length, 1);
+        assertEq(cb.getPausables()[0], address(mockPausable));
 
         vm.prank(pauser2);
         cb.pause(address(mockPausable));
@@ -264,7 +256,6 @@ contract PauserRegistryTest is TestBase {
         cb.pause(address(mockPausable));
         assertTrue(mockPausable.isPaused());
         assertEq(cb.getPausableCount(pauser), 2);
-        assertEq(cb.getPauserCount(), 1);
 
         // Admin unregisters the remaining two
         vm.startPrank(admin);
@@ -273,8 +264,7 @@ contract PauserRegistryTest is TestBase {
         vm.stopPrank();
 
         assertEq(cb.getPausableCount(pauser), 0);
-        assertEq(cb.getPauserCount(), 0);
-        assertEq(cb.getPausers().length, 0);
+        assertEq(cb.getPausables().length, 0);
 
         // Pauser can no longer act
         vm.expectRevert(CircuitBreaker.SenderNotPauser.selector);
@@ -290,6 +280,12 @@ contract PauserRegistryTest is TestBase {
         vm.expectRevert(PauserRegistry.PausableIsZero.selector);
         vm.prank(admin);
         cb.registerPauser(address(0), pauser);
+    }
+
+    function test_RevertIf_PauserIsAlreadyZero() public {
+        vm.expectRevert(PauserRegistry.PauserIsAlreadyZero.selector);
+        vm.prank(admin);
+        cb.registerPauser(address(mockPausable), address(0));
     }
 
     function test_RevertIf_SenderNotAdmin() public {

@@ -33,8 +33,7 @@ contract ConstructorTest is TestBase {
         assertEq(fresh.MAX_HEARTBEAT_INTERVAL(), MAX_HEARTBEAT_INTERVAL);
         assertEq(fresh.pauseDuration(), PAUSE_DURATION);
         assertEq(fresh.heartbeatInterval(), HEARTBEAT_INTERVAL);
-        assertEq(fresh.getPauserCount(), 0);
-        assertEq(fresh.getPausers().length, 0);
+        assertEq(fresh.getPausables().length, 0);
     }
 
     function test_MinEqualsMaxPauseDuration() public {

@@ -189,14 +189,9 @@ contract CircuitBreaker {
         return registry.getPauser(_pausable);
     }
 
-    /// @notice Return all unique pauser addresses currently registered.
-    function getPausers() external view returns (address[] memory) {
-        return registry.getPausers();
-    }
-
-    /// @notice Return the number of unique pausers currently registered.
-    function getPauserCount() external view returns (uint256) {
-        return registry.getPauserCount();
+    /// @notice Return all pausable addresses currently registered.
+    function getPausables() external view returns (address[] memory) {
+        return registry.getPausables();
     }
 
     /// @notice Return the number of pausables a pauser is currently registered for.
@@ -238,7 +233,7 @@ contract CircuitBreaker {
     /// @dev    Does not verify CircuitBreaker has pause permission on the pausable.
     ///         Does not verify pausable implements the correct interface.
     function registerPauser(address _pausable, address _pauser) external onlyAdmin {
-        registry.register(_pausable, _pauser);
+        registry.setPauser(_pausable, _pauser);
 
         if (_pauser != address(0)) _updateHeartbeat(_pauser, false);
     }
@@ -265,7 +260,7 @@ contract CircuitBreaker {
         uint256 duration = pauseDuration;
         IPausable pausable = IPausable(_pausable);
 
-        registry.register(_pausable, address(0));
+        registry.setPauser(_pausable, address(0));
         pausable.pauseFor(duration);
         require(pausable.isPaused(), PauseFailed());
 
