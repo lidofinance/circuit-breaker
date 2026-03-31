@@ -14,9 +14,8 @@ library Registry {
         mapping(address pausable => address) pauser;
         /// @dev 1-based index into pausables array; 0 means not present.
         mapping(address pausable => uint256) index;
-        /// @dev Number of pausables assigned to a pauser.
-        mapping(address pauser => uint256) pausableCount;
         address[] pausables;
+        mapping(address pauser => uint256) pausableCount;
     }
 
     // =========================================================================
