@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.34;
 
-/// @title  PauserRegistry
+/// @title  Registry
 /// @author Lido
 /// @notice Library for managing an enumerable pausable-pauser registry.
-library PauserRegistry {
+library Registry {
     // =========================================================================
     // Types
     // =========================================================================

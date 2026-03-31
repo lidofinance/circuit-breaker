@@ -4,17 +4,17 @@ pragma solidity 0.8.34;
 
 import {Vm} from "forge-std/Test.sol";
 import {CircuitBreaker} from "../src/CircuitBreaker.sol";
-import {PauserRegistry} from "../src/PauserRegistry.sol";
+import {Registry} from "../src/Registry.sol";
 import {TestBase, MockPausable} from "./helpers/TestBase.sol";
 
-contract PauserRegistryTest is TestBase {
+contract RegistryTest is TestBase {
     // =========================================================================
     // register
     // =========================================================================
 
     function test_RegistersAndEmits() public {
         vm.expectEmit(true, true, true, true);
-        emit PauserRegistry.PauserSet(address(mockPausable), address(0), pauser);
+        emit Registry.PauserSet(address(mockPausable), address(0), pauser);
         vm.expectEmit(true, false, false, true);
         emit CircuitBreaker.HeartbeatUpdated(pauser, block.timestamp + HEARTBEAT_INTERVAL);
 
@@ -39,7 +39,7 @@ contract PauserRegistryTest is TestBase {
         _registerPauser(address(mockPausable), pauser);
 
         vm.expectEmit(true, true, true, true);
-        emit PauserRegistry.PauserSet(address(mockPausable), pauser, pauser2);
+        emit Registry.PauserSet(address(mockPausable), pauser, pauser2);
         vm.expectEmit(true, false, false, true);
         emit CircuitBreaker.HeartbeatUpdated(pauser2, block.timestamp + HEARTBEAT_INTERVAL);
 
@@ -75,7 +75,7 @@ contract PauserRegistryTest is TestBase {
         _registerPauser(address(mockPausable), pauser);
 
         vm.expectEmit(true, true, true, true);
-        emit PauserRegistry.PauserSet(address(mockPausable), pauser, address(0));
+        emit Registry.PauserSet(address(mockPausable), pauser, address(0));
 
         vm.recordLogs();
         vm.prank(admin);
@@ -277,13 +277,13 @@ contract PauserRegistryTest is TestBase {
     // =========================================================================
 
     function test_RevertIf_ZeroPausable() public {
-        vm.expectRevert(PauserRegistry.PausableIsZero.selector);
+        vm.expectRevert(Registry.PausableIsZero.selector);
         vm.prank(admin);
         cb.registerPauser(address(0), pauser);
     }
 
     function test_RevertIf_PauserIsAlreadyZero() public {
-        vm.expectRevert(PauserRegistry.PauserIsAlreadyZero.selector);
+        vm.expectRevert(Registry.PauserIsAlreadyZero.selector);
         vm.prank(admin);
         cb.registerPauser(address(mockPausable), address(0));
     }

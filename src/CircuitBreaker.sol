@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.34;
 
-import {PauserRegistry} from "./PauserRegistry.sol";
+import {Registry} from "./Registry.sol";
 
 /// @title  IPausable
 /// @notice Interface pausable contracts must implement for CircuitBreaker compatibility.
@@ -35,7 +35,7 @@ interface IPausable {
 ///         - Pausable is a trusted contract upon registration.
 ///         - Pauser is a trusted multisig committee upon registration.
 contract CircuitBreaker {
-    using PauserRegistry for PauserRegistry.Storage;
+    using Registry for Registry.Storage;
 
     // =========================================================================
     // Immutables
@@ -70,7 +70,7 @@ contract CircuitBreaker {
     mapping(address pauser => uint256 timestamp) public heartbeatExpiry;
 
     /// @notice Pauser registry tracking pausable-to-pauser registrations.
-    PauserRegistry.Storage internal registry;
+    Registry.Storage internal registry;
 
     /// @dev Cross-pausable reentrancy guard.
     bool transient lock;
