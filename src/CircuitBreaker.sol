@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.34;
 
-import {PauserRegistryManager} from "./PauserRegistryManager.sol";
+import {PauserRegistry} from "./PauserRegistry.sol";
 
 /// @title  IPausable
 /// @notice Interface pausable contracts must implement for CircuitBreaker compatibility.
@@ -35,7 +35,7 @@ interface IPausable {
 ///         - Pausable is a trusted contract upon registration.
 ///         - Pauser is a trusted multisig committee upon registration.
 contract CircuitBreaker {
-    using PauserRegistryManager for PauserRegistryManager.PauserRegistry;
+    using PauserRegistry for PauserRegistry.Storage;
 
     // =========================================================================
     // Immutables
@@ -70,7 +70,7 @@ contract CircuitBreaker {
     mapping(address pauser => uint256 timestamp) public heartbeatExpiry;
 
     /// @notice Pauser registry tracking pausable-to-pauser registrations.
-    PauserRegistryManager.PauserRegistry internal registry;
+    PauserRegistry.Storage internal registry;
 
     /// @dev Cross-pausable reentrancy guard.
     bool transient lock;
@@ -186,17 +186,17 @@ contract CircuitBreaker {
     /// @notice Return the pauser registered for a pausable.
     /// @param  _pausable Pausable contract address.
     function getPauser(address _pausable) external view returns (address) {
-        return registry.get(_pausable);
+        return registry.getPauser(_pausable);
     }
 
     /// @notice Return all unique pauser addresses currently registered.
     function getPausers() external view returns (address[] memory) {
-        return registry.getAll();
+        return registry.getPausers();
     }
 
     /// @notice Return the number of unique pausers currently registered.
     function getPauserCount() external view returns (uint256) {
-        return registry.count();
+        return registry.getPauserCount();
     }
 
     /// @notice Return the number of pausables a pauser is currently registered for.
@@ -249,7 +249,7 @@ contract CircuitBreaker {
 
     /// @notice Record a liveness proof to remain authorized to pause.
     function heartbeat() public {
-        require(registry.contains(msg.sender), SenderNotPauser());
+        require(registry.isRegistered(msg.sender), SenderNotPauser());
         _updateHeartbeat(msg.sender, true);
     }
 
@@ -259,7 +259,7 @@ contract CircuitBreaker {
     ///         - Assumes CircuitBreaker has the pause role for the pausable.
     /// @param  _pausable Pausable contract to pause.
     function pause(address _pausable) external nonReentrant {
-        require(msg.sender == registry.get(_pausable), SenderNotPauser());
+        require(msg.sender == registry.getPauser(_pausable), SenderNotPauser());
         _updateHeartbeat(msg.sender, true);
 
         uint256 duration = pauseDuration;

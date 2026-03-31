@@ -4,7 +4,7 @@ pragma solidity 0.8.34;
 
 import {Vm} from "forge-std/Test.sol";
 import {CircuitBreaker} from "../src/CircuitBreaker.sol";
-import {PauserRegistryManager} from "../src/PauserRegistryManager.sol";
+import {PauserRegistry} from "../src/PauserRegistry.sol";
 import {TestBase, MockPausable} from "./helpers/TestBase.sol";
 
 contract PauserRegistryTest is TestBase {
@@ -14,7 +14,7 @@ contract PauserRegistryTest is TestBase {
 
     function test_RegistersAndEmits() public {
         vm.expectEmit(true, true, true, true);
-        emit PauserRegistryManager.PauserChanged(address(mockPausable), address(0), pauser);
+        emit PauserRegistry.PauserRegistered(address(mockPausable), address(0), pauser);
         vm.expectEmit(true, false, false, true);
         emit CircuitBreaker.HeartbeatUpdated(pauser, block.timestamp + HEARTBEAT_INTERVAL);
 
@@ -40,7 +40,7 @@ contract PauserRegistryTest is TestBase {
         _registerPauser(address(mockPausable), pauser);
 
         vm.expectEmit(true, true, true, true);
-        emit PauserRegistryManager.PauserChanged(address(mockPausable), pauser, pauser2);
+        emit PauserRegistry.PauserRegistered(address(mockPausable), pauser, pauser2);
         vm.expectEmit(true, false, false, true);
         emit CircuitBreaker.HeartbeatUpdated(pauser2, block.timestamp + HEARTBEAT_INTERVAL);
 
@@ -77,7 +77,7 @@ contract PauserRegistryTest is TestBase {
         _registerPauser(address(mockPausable), pauser);
 
         vm.expectEmit(true, true, true, true);
-        emit PauserRegistryManager.PauserChanged(address(mockPausable), pauser, address(0));
+        emit PauserRegistry.PauserRegistered(address(mockPausable), pauser, address(0));
 
         vm.recordLogs();
         vm.prank(admin);
@@ -287,7 +287,7 @@ contract PauserRegistryTest is TestBase {
     // =========================================================================
 
     function test_RevertIf_ZeroPausable() public {
-        vm.expectRevert(PauserRegistryManager.PausableIsZero.selector);
+        vm.expectRevert(PauserRegistry.PausableIsZero.selector);
         vm.prank(admin);
         cb.registerPauser(address(0), pauser);
     }

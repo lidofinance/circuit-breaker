@@ -3,7 +3,7 @@
 pragma solidity 0.8.34;
 
 import {CircuitBreaker, IPausable} from "../src/CircuitBreaker.sol";
-import {PauserRegistryManager} from "../src/PauserRegistryManager.sol";
+import {PauserRegistry} from "../src/PauserRegistry.sol";
 import {TestBase, MockPausable} from "./helpers/TestBase.sol";
 
 contract MockPausablePauseFails is IPausable {
@@ -88,7 +88,7 @@ contract PauseTest is TestBase {
         vm.expectEmit(true, false, false, true);
         emit CircuitBreaker.HeartbeatUpdated(pauser, ts + HEARTBEAT_INTERVAL);
         vm.expectEmit(true, true, true, true);
-        emit PauserRegistryManager.PauserChanged(address(mockPausable), pauser, address(0));
+        emit PauserRegistry.PauserRegistered(address(mockPausable), pauser, address(0));
         vm.expectEmit(true, true, false, true);
         emit CircuitBreaker.PauseTriggered(address(mockPausable), pauser, PAUSE_DURATION);
 
