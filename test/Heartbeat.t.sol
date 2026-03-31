@@ -37,6 +37,8 @@ contract HeartbeatTest is TestBase {
         _registerPauser(address(mockPausable), pauser);
         vm.warp(block.timestamp + HEARTBEAT_INTERVAL - 1);
 
+        vm.expectEmit(true, false, false, true);
+        emit CircuitBreaker.HeartbeatUpdated(pauser, block.timestamp + HEARTBEAT_INTERVAL);
         vm.prank(pauser);
         cb.heartbeat();
 
@@ -46,10 +48,14 @@ contract HeartbeatTest is TestBase {
     function test_UpdatesTimestampOnSubsequentCall() public {
         _registerPauser(address(mockPausable), pauser);
 
+        vm.expectEmit(true, false, false, true);
+        emit CircuitBreaker.HeartbeatUpdated(pauser, block.timestamp + HEARTBEAT_INTERVAL);
         vm.prank(pauser);
         cb.heartbeat();
 
         vm.warp(block.timestamp + 1 hours);
+        vm.expectEmit(true, false, false, true);
+        emit CircuitBreaker.HeartbeatUpdated(pauser, block.timestamp + HEARTBEAT_INTERVAL);
         vm.prank(pauser);
         cb.heartbeat();
 
@@ -62,11 +68,15 @@ contract HeartbeatTest is TestBase {
         _registerPauser(address(mockPausable), pauser);
         _registerPauser(address(mp2), pauser2);
 
+        vm.expectEmit(true, false, false, true);
+        emit CircuitBreaker.HeartbeatUpdated(pauser, block.timestamp + HEARTBEAT_INTERVAL);
         vm.prank(pauser);
         cb.heartbeat();
         uint256 ts1 = block.timestamp;
 
         vm.warp(block.timestamp + 1 hours);
+        vm.expectEmit(true, false, false, true);
+        emit CircuitBreaker.HeartbeatUpdated(pauser2, block.timestamp + HEARTBEAT_INTERVAL);
         vm.prank(pauser2);
         cb.heartbeat();
         uint256 ts2 = block.timestamp;
@@ -84,6 +94,8 @@ contract HeartbeatTest is TestBase {
         cb.pause(address(mockPausable));
 
         vm.warp(block.timestamp + 1 hours);
+        vm.expectEmit(true, false, false, true);
+        emit CircuitBreaker.HeartbeatUpdated(pauser, block.timestamp + HEARTBEAT_INTERVAL);
         vm.prank(pauser);
         cb.heartbeat();
 
@@ -153,5 +165,43 @@ contract HeartbeatTest is TestBase {
 
     function test_IsPauserActive_UnknownAddressReturnsFalse() public view {
         assertFalse(cb.isPauserLive(stranger));
+    }
+
+    function test_IsPauserLive_FalseAtExactExpiry() public {
+        _registerPauser(address(mockPausable), pauser);
+        uint256 expiry = cb.heartbeatExpiry(pauser);
+
+        vm.warp(expiry);
+        assertFalse(cb.isPauserLive(pauser));
+    }
+
+    function test_IsPauserLive_TrueOneSecondBeforeExpiry() public {
+        _registerPauser(address(mockPausable), pauser);
+        uint256 expiry = cb.heartbeatExpiry(pauser);
+
+        vm.warp(expiry - 1);
+        assertTrue(cb.isPauserLive(pauser));
+    }
+
+    function test_RevertIf_StrangerNotRegistered() public {
+        _registerPauser(address(mockPausable), pauser);
+
+        vm.expectRevert(CircuitBreaker.SenderNotPauser.selector);
+        vm.prank(stranger);
+        cb.heartbeat();
+    }
+
+    function testFuzz_Heartbeat(uint256 warpTime) public {
+        _registerPauser(address(mockPausable), pauser);
+        warpTime = bound(warpTime, 0, HEARTBEAT_INTERVAL - 1);
+
+        vm.warp(block.timestamp + warpTime);
+        vm.expectEmit(true, false, false, true);
+        emit CircuitBreaker.HeartbeatUpdated(pauser, block.timestamp + HEARTBEAT_INTERVAL);
+        vm.prank(pauser);
+        cb.heartbeat();
+
+        assertEq(cb.heartbeatExpiry(pauser), block.timestamp + HEARTBEAT_INTERVAL);
+        assertTrue(cb.isPauserLive(pauser));
     }
 }
