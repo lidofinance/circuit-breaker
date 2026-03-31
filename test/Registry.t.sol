@@ -277,13 +277,13 @@ contract RegistryTest is TestBase {
     // =========================================================================
 
     function test_RevertIf_ZeroPausable() public {
-        vm.expectRevert(Registry.PausableIsZero.selector);
+        vm.expectRevert(Registry.PausableZero.selector);
         vm.prank(admin);
         cb.registerPauser(address(0), pauser);
     }
 
-    function test_RevertIf_PauserIsAlreadyZero() public {
-        vm.expectRevert(Registry.PauserIsAlreadyZero.selector);
+    function test_RevertIf_PauserAlreadyZero() public {
+        vm.expectRevert(Registry.PauserAlreadyZero.selector);
         vm.prank(admin);
         cb.registerPauser(address(mockPausable), address(0));
     }

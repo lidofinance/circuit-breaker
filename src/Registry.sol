@@ -29,8 +29,8 @@ library Registry {
     // Errors
     // =========================================================================
 
-    error PausableIsZero();
-    error PauserIsAlreadyZero();
+    error PausableZero();
+    error PauserAlreadyZero();
 
     // =========================================================================
     // View functions
@@ -47,6 +47,12 @@ library Registry {
         return _self.pausables;
     }
 
+    /// @notice Return the number of pausables assigned to a pauser.
+    /// @param  _pauser Pauser address.
+    function getPausableCount(Storage storage _self, address _pauser) internal view returns (uint256) {
+        return _self.pausableCount[_pauser];
+    }
+
     /// @notice Return whether an address is currently registered for at least one pausable.
     /// @param  _pauser Address to check.
     function isRegistered(Storage storage _self, address _pauser) internal view returns (bool) {
@@ -61,7 +67,7 @@ library Registry {
     /// @param  _pausable Pausable contract address.
     /// @param  _pauser   New pauser address. Use address(0) to unregister.
     function setPauser(Storage storage _self, address _pausable, address _pauser) internal {
-        require(_pausable != address(0), PausableIsZero());
+        require(_pausable != address(0), PausableZero());
 
         // Cache storage for gas efficiency.
         mapping(address => address) storage pauser = _self.pauser;
@@ -75,7 +81,7 @@ library Registry {
 
         // Cannot remove a pauser if no pauser is set.
         // Using manual revert instead of require to avoid inverted boolean logic
-        if (isNewPausable && isRemovingPauser) revert PauserIsAlreadyZero();
+        if (isNewPausable && isRemovingPauser) revert PauserAlreadyZero();
 
         // Update the pauser.
         pauser[_pausable] = _pauser;

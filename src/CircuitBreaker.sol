@@ -197,7 +197,7 @@ contract CircuitBreaker {
     /// @notice Return the number of pausables a pauser is currently registered for.
     /// @param  _pauser Pauser address.
     function getPausableCount(address _pauser) external view returns (uint256) {
-        return registry.pausableCount[_pauser];
+        return registry.getPausableCount(_pauser);
     }
 
     /// @notice Return whether a pauser's heartbeat window is still valid.
@@ -214,14 +214,12 @@ contract CircuitBreaker {
     /// @notice Set the pause duration applied on pause.
     /// @param  _pauseDuration New duration in seconds.
     function setPauseDuration(uint256 _pauseDuration) external onlyAdmin {
-        require(_pauseDuration != pauseDuration, PauseDurationUnchanged());
         _setPauseDuration(_pauseDuration);
     }
 
     /// @notice Set the heartbeat interval pausers must maintain to remain active.
     /// @param  _heartbeatInterval New interval in seconds.
     function setHeartbeatInterval(uint256 _heartbeatInterval) external onlyAdmin {
-        require(_heartbeatInterval != heartbeatInterval, HeartbeatIntervalUnchanged());
         _setHeartbeatInterval(_heartbeatInterval);
     }
 
@@ -243,7 +241,7 @@ contract CircuitBreaker {
     // =========================================================================
 
     /// @notice Record a liveness proof to remain authorized to pause.
-    function heartbeat() public {
+    function heartbeat() external {
         require(registry.isRegistered(msg.sender), SenderNotPauser());
         _updateHeartbeat(msg.sender, true);
     }
@@ -279,6 +277,7 @@ contract CircuitBreaker {
     }
 
     function _setPauseDuration(uint256 _pauseDuration) internal {
+        require(_pauseDuration != pauseDuration, PauseDurationUnchanged());
         require(_pauseDuration >= MIN_PAUSE_DURATION, PauseDurationBelowMin());
         require(_pauseDuration <= MAX_PAUSE_DURATION, PauseDurationAboveMax());
 
@@ -289,6 +288,7 @@ contract CircuitBreaker {
     }
 
     function _setHeartbeatInterval(uint256 _heartbeatInterval) internal {
+        require(_heartbeatInterval != heartbeatInterval, HeartbeatIntervalUnchanged());
         require(_heartbeatInterval >= MIN_HEARTBEAT_INTERVAL, HeartbeatIntervalBelowMin());
         require(_heartbeatInterval <= MAX_HEARTBEAT_INTERVAL, HeartbeatIntervalAboveMax());
 
