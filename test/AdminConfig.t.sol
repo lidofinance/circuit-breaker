@@ -124,7 +124,6 @@ contract SetPauseDuration is TestBase {
             previous = durations[i];
         }
     }
-
 }
 
 // =============================================================================
@@ -234,7 +233,6 @@ contract SetHeartbeatInterval is TestBase {
             previous = intervals[i];
         }
     }
-
 }
 
 // =============================================================================
@@ -247,7 +245,9 @@ contract SetPauseDuration_TightWindow is TestBase {
 
     function setUp() public override {
         super.setUp();
-        tight = new CircuitBreaker(admin, FIXED, FIXED, MIN_HEARTBEAT_INTERVAL, MAX_HEARTBEAT_INTERVAL, FIXED, HEARTBEAT_INTERVAL);
+        tight = new CircuitBreaker(
+            admin, FIXED, FIXED, MIN_HEARTBEAT_INTERVAL, MAX_HEARTBEAT_INTERVAL, FIXED, HEARTBEAT_INTERVAL
+        );
     }
 
     function test_OnlyAcceptsExactValue() public {
@@ -302,7 +302,9 @@ contract SetPauseDuration_WideWindow is TestBase {
 
     function setUp() public override {
         super.setUp();
-        wide = new CircuitBreaker(admin, 1, type(uint256).max, MIN_HEARTBEAT_INTERVAL, MAX_HEARTBEAT_INTERVAL, 1, HEARTBEAT_INTERVAL);
+        wide = new CircuitBreaker(
+            admin, 1, type(uint256).max, MIN_HEARTBEAT_INTERVAL, MAX_HEARTBEAT_INTERVAL, 1, HEARTBEAT_INTERVAL
+        );
     }
 
     function test_SucceedsAtLargeValue() public {
@@ -327,7 +329,8 @@ contract SetHeartbeatInterval_WideWindow is TestBase {
 
     function setUp() public override {
         super.setUp();
-        wide = new CircuitBreaker(admin, MIN_PAUSE_DURATION, MAX_PAUSE_DURATION, 1, type(uint256).max, PAUSE_DURATION, 1);
+        wide =
+            new CircuitBreaker(admin, MIN_PAUSE_DURATION, MAX_PAUSE_DURATION, 1, type(uint256).max, PAUSE_DURATION, 1);
     }
 
     function test_SucceedsAtLargeValue() public {

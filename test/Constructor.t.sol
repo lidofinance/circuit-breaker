@@ -26,7 +26,13 @@ contract ConstructorValidation is TestBase {
     function test_RevertIf_ZeroMinPauseDuration() public {
         vm.expectRevert(CircuitBreaker.MinPauseDurationZero.selector);
         new CircuitBreaker(
-            admin, 0, MAX_PAUSE_DURATION, MIN_HEARTBEAT_INTERVAL, MAX_HEARTBEAT_INTERVAL, PAUSE_DURATION, HEARTBEAT_INTERVAL
+            admin,
+            0,
+            MAX_PAUSE_DURATION,
+            MIN_HEARTBEAT_INTERVAL,
+            MAX_HEARTBEAT_INTERVAL,
+            PAUSE_DURATION,
+            HEARTBEAT_INTERVAL
         );
     }
 
@@ -119,7 +125,13 @@ contract ConstructorValidation is TestBase {
         // admin=0 AND minPauseDuration=0 — should revert with AdminZero (first check)
         vm.expectRevert(CircuitBreaker.AdminZero.selector);
         new CircuitBreaker(
-            address(0), 0, MAX_PAUSE_DURATION, MIN_HEARTBEAT_INTERVAL, MAX_HEARTBEAT_INTERVAL, PAUSE_DURATION, HEARTBEAT_INTERVAL
+            address(0),
+            0,
+            MAX_PAUSE_DURATION,
+            MIN_HEARTBEAT_INTERVAL,
+            MAX_HEARTBEAT_INTERVAL,
+            PAUSE_DURATION,
+            HEARTBEAT_INTERVAL
         );
     }
 }
@@ -132,7 +144,13 @@ contract ConstructorBoundaryValues is TestBase {
     function test_MinEqualsMaxPauseDuration() public {
         uint256 fixedDuration = 7 days;
         CircuitBreaker fresh = new CircuitBreaker(
-            admin, fixedDuration, fixedDuration, MIN_HEARTBEAT_INTERVAL, MAX_HEARTBEAT_INTERVAL, fixedDuration, HEARTBEAT_INTERVAL
+            admin,
+            fixedDuration,
+            fixedDuration,
+            MIN_HEARTBEAT_INTERVAL,
+            MAX_HEARTBEAT_INTERVAL,
+            fixedDuration,
+            HEARTBEAT_INTERVAL
         );
 
         assertEq(fresh.MIN_PAUSE_DURATION(), fixedDuration);
@@ -224,7 +242,8 @@ contract ConstructorBoundaryValues is TestBase {
     }
 
     function test_SmallestValidMinHeartbeatInterval() public {
-        CircuitBreaker fresh = new CircuitBreaker(admin, MIN_PAUSE_DURATION, MAX_PAUSE_DURATION, 1, 1, PAUSE_DURATION, 1);
+        CircuitBreaker fresh =
+            new CircuitBreaker(admin, MIN_PAUSE_DURATION, MAX_PAUSE_DURATION, 1, 1, PAUSE_DURATION, 1);
 
         assertEq(fresh.MIN_HEARTBEAT_INTERVAL(), 1);
         assertEq(fresh.MAX_HEARTBEAT_INTERVAL(), 1);
