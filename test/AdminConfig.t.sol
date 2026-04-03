@@ -41,12 +41,6 @@ contract AdminConfigTest is TestBase {
         cb.setPauseDuration(MAX_PAUSE_DURATION);
     }
 
-    function test_SetPauseDuration_RevertIf_Unchanged() public {
-        vm.expectRevert(CircuitBreaker.PauseDurationUnchanged.selector);
-        vm.prank(admin);
-        cb.setPauseDuration(PAUSE_DURATION);
-    }
-
     function test_SetPauseDuration_RevertIf_OutOfBounds() public {
         vm.startPrank(admin);
 
@@ -175,12 +169,6 @@ contract AdminConfigTest is TestBase {
         vm.expectRevert(CircuitBreaker.SenderNotAdmin.selector);
         vm.prank(stranger);
         cb.setHeartbeatInterval(MAX_HEARTBEAT_INTERVAL);
-    }
-
-    function test_SetHeartbeatInterval_RevertIf_Unchanged() public {
-        vm.expectRevert(CircuitBreaker.HeartbeatIntervalUnchanged.selector);
-        vm.prank(admin);
-        cb.setHeartbeatInterval(HEARTBEAT_INTERVAL);
     }
 
     function test_SetHeartbeatInterval_RevertIf_OutOfBounds() public {

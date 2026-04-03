@@ -322,10 +322,14 @@ contract RegistryTest is TestBase {
         cb.registerPauser(address(0), pauser);
     }
 
-    function test_RevertIf_PauserAlreadyZero() public {
-        vm.expectRevert(Registry.PauserAlreadyZero.selector);
+    function test_UnregisterNoop_EmitsEvent() public {
+        vm.expectEmit(true, true, true, true);
+        emit Registry.PauserSet(address(mockPausable), address(0), address(0));
         vm.prank(admin);
         cb.registerPauser(address(mockPausable), address(0));
+
+        assertEq(cb.getPauser(address(mockPausable)), address(0));
+        assertEq(cb.getPausables().length, 0);
     }
 
     function test_RevertIf_SenderNotAdmin() public {

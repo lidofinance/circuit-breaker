@@ -52,8 +52,7 @@ contract ConstructorTest is TestBase {
         assertEq(fresh.MAX_PAUSE_DURATION(), fixedDuration);
         assertEq(fresh.pauseDuration(), fixedDuration);
 
-        // Cannot change pause duration since min == max == current
-        vm.expectRevert(CircuitBreaker.PauseDurationUnchanged.selector);
+        // Setting the same value is a no-op (no revert).
         vm.prank(admin);
         fresh.setPauseDuration(fixedDuration);
     }
@@ -68,13 +67,13 @@ contract ConstructorTest is TestBase {
         assertEq(fresh.MAX_HEARTBEAT_INTERVAL(), fixedInterval);
         assertEq(fresh.heartbeatInterval(), fixedInterval);
 
-        vm.expectRevert(CircuitBreaker.HeartbeatIntervalUnchanged.selector);
+        // Setting the same value is a no-op (no revert).
         vm.prank(admin);
         fresh.setHeartbeatInterval(fixedInterval);
     }
 
     function test_RevertIf_ZeroAdmin() public {
-        vm.expectRevert(CircuitBreaker.AdminIsZero.selector);
+        vm.expectRevert(CircuitBreaker.AdminZero.selector);
         new CircuitBreaker(
             address(0),
             MIN_PAUSE_DURATION,
@@ -87,24 +86,11 @@ contract ConstructorTest is TestBase {
     }
 
     function test_RevertIf_ZeroMinPauseDuration() public {
-        vm.expectRevert(CircuitBreaker.MinPauseDurationIsZero.selector);
+        vm.expectRevert(CircuitBreaker.MinPauseDurationZero.selector);
         new CircuitBreaker(
             admin,
             0,
             MAX_PAUSE_DURATION,
-            MIN_HEARTBEAT_INTERVAL,
-            MAX_HEARTBEAT_INTERVAL,
-            PAUSE_DURATION,
-            HEARTBEAT_INTERVAL
-        );
-    }
-
-    function test_RevertIf_ZeroMaxPauseDuration() public {
-        vm.expectRevert(CircuitBreaker.MaxPauseDurationIsZero.selector);
-        new CircuitBreaker(
-            admin,
-            MIN_PAUSE_DURATION,
-            0,
             MIN_HEARTBEAT_INTERVAL,
             MAX_HEARTBEAT_INTERVAL,
             PAUSE_DURATION,
@@ -126,16 +112,9 @@ contract ConstructorTest is TestBase {
     }
 
     function test_RevertIf_ZeroMinHeartbeatInterval() public {
-        vm.expectRevert(CircuitBreaker.MinHeartbeatIntervalIsZero.selector);
+        vm.expectRevert(CircuitBreaker.MinHeartbeatIntervalZero.selector);
         new CircuitBreaker(
             admin, MIN_PAUSE_DURATION, MAX_PAUSE_DURATION, 0, MAX_HEARTBEAT_INTERVAL, PAUSE_DURATION, HEARTBEAT_INTERVAL
-        );
-    }
-
-    function test_RevertIf_ZeroMaxHeartbeatInterval() public {
-        vm.expectRevert(CircuitBreaker.MaxHeartbeatIntervalIsZero.selector);
-        new CircuitBreaker(
-            admin, MIN_PAUSE_DURATION, MAX_PAUSE_DURATION, MIN_HEARTBEAT_INTERVAL, 0, PAUSE_DURATION, HEARTBEAT_INTERVAL
         );
     }
 
