@@ -11,15 +11,13 @@ import {Registry} from "../../src/Registry.sol";
 // ---------------------------------------------------------------------------
 
 contract MockPausable is IPausable {
-    bool private _paused;
     uint256 private _resumeSince;
 
     function isPaused() external view returns (bool) {
-        return _paused;
+        return block.timestamp < _resumeSince;
     }
 
     function pauseFor(uint256 duration) external {
-        _paused = true;
         _resumeSince = block.timestamp + duration;
     }
 
@@ -27,8 +25,8 @@ contract MockPausable is IPausable {
         return _resumeSince;
     }
 
-    function setState(bool paused) external {
-        _paused = paused;
+    function unpause() external {
+        _resumeSince = 0;
     }
 }
 
@@ -68,5 +66,76 @@ abstract contract TestBase is Test {
     function _registerPauser(address _pausable, address _pauser) internal {
         vm.prank(admin);
         cb.registerPauser(_pausable, _pauser);
+    }
+
+    function _advanceToHeartbeatEdge(address _pauser) internal {
+        vm.warp(cb.heartbeatExpiry(_pauser) - 1);
+    }
+
+    function _advanceToHeartbeatExpiry(address _pauser) internal {
+        vm.warp(cb.heartbeatExpiry(_pauser));
+    }
+
+    function _advancePastHeartbeat(address _pauser) internal {
+        vm.warp(cb.heartbeatExpiry(_pauser) + 1);
+    }
+
+    function _assertPausablesLength(uint256 expectedLength) internal view {
+        assertEq(cb.getPausables().length, expectedLength);
+    }
+
+    function _assertPausablesContain(address _pausable) internal view {
+        address[] memory pausables = cb.getPausables();
+        bool found = false;
+        for (uint256 i = 0; i < pausables.length; i++) {
+            if (pausables[i] == _pausable) {
+                found = true;
+                break;
+            }
+        }
+        assertTrue(found, "pausable not found in getPausables()");
+    }
+
+    function _assertPausablesExclude(address _pausable) internal view {
+        address[] memory pausables = cb.getPausables();
+        for (uint256 i = 0; i < pausables.length; i++) {
+            assertTrue(pausables[i] != _pausable, "pausable unexpectedly found in getPausables()");
+        }
+    }
+
+    function _assertNoDuplicatesInPausables() internal view {
+        address[] memory pausables = cb.getPausables();
+        for (uint256 i = 0; i < pausables.length; i++) {
+            for (uint256 j = i + 1; j < pausables.length; j++) {
+                assertTrue(pausables[i] != pausables[j], "duplicate in getPausables()");
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+abstract contract WithRegisteredPauser is TestBase {
+    function setUp() public virtual override {
+        super.setUp();
+        _registerPauser(address(mockPausable), pauser);
+    }
+}
+
+abstract contract WithThreePausables is TestBase {
+    MockPausable internal pausable1;
+    MockPausable internal pausable2;
+    MockPausable internal pausable3;
+
+    function setUp() public virtual override {
+        super.setUp();
+        pausable1 = new MockPausable();
+        pausable2 = new MockPausable();
+        pausable3 = new MockPausable();
+        _registerPauser(address(pausable1), pauser);
+        _registerPauser(address(pausable2), pauser);
+        _registerPauser(address(pausable3), pauser);
     }
 }
