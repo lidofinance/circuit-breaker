@@ -15,10 +15,10 @@ library Registry {
     ///      A separate counter (pausableCount) is kept per pauser so that isRegistered() can
     ///      answer in O(1) instead of looping over the pausables array.
     struct Storage {
-        mapping(address pausable => address) pauser;
-        mapping(address pausable => uint256) oneBasedIndex;
+        mapping(address pausable => address pauser) pauser;
+        mapping(address pausable => uint256 oneBasedIndex) oneBasedIndex;
         address[] pausables;
-        mapping(address pauser => uint256) pausableCount;
+        mapping(address pauser => uint256 pausableCount) pausableCount;
     }
 
     // =========================================================================
