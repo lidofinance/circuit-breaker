@@ -286,10 +286,9 @@ contract CircuitBreaker {
         require(_newPauseDuration >= MIN_PAUSE_DURATION, PauseDurationBelowMin());
         require(_newPauseDuration <= MAX_PAUSE_DURATION, PauseDurationAboveMax());
 
-        uint256 previousPauseDuration = pauseDuration;
-        pauseDuration = _newPauseDuration;
+        emit PauseDurationUpdated(pauseDuration, _newPauseDuration);
 
-        emit PauseDurationUpdated(previousPauseDuration, _newPauseDuration);
+        pauseDuration = _newPauseDuration;
     }
 
     /// @dev    Sets the heartbeat interval. Reverts if outside [MIN, MAX] bounds.
@@ -298,9 +297,8 @@ contract CircuitBreaker {
         require(_newHeartbeatInterval >= MIN_HEARTBEAT_INTERVAL, HeartbeatIntervalBelowMin());
         require(_newHeartbeatInterval <= MAX_HEARTBEAT_INTERVAL, HeartbeatIntervalAboveMax());
 
-        uint256 previousHeartbeatInterval = heartbeatInterval;
-        heartbeatInterval = _newHeartbeatInterval;
+        emit HeartbeatIntervalUpdated(heartbeatInterval, _newHeartbeatInterval);
 
-        emit HeartbeatIntervalUpdated(previousHeartbeatInterval, _newHeartbeatInterval);
+        heartbeatInterval = _newHeartbeatInterval;
     }
 }
