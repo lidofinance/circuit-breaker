@@ -1,0 +1,18 @@
+{
+  "circuitBreaker": "0xe0B4Cd22430Ac55f0A8f1D45ecF2bd2B7Efb7E20",
+  "constructorArgs": {
+    "admin": "0x0534aA41907c9631fae990960bCC72d75fA7cfeD",
+    "initialHeartbeatInterval": 31536000,
+    "initialPauseDuration": 3600,
+    "maxHeartbeatInterval": 94608000,
+    "maxPauseDuration": 2592000,
+    "minHeartbeatInterval": 60,
+    "minPauseDuration": 60
+  },
+  "meta": {
+    "blockNumber": 2609758,
+    "chainId": 560048,
+    "deployer": "0xc51c16Cf3Fc254eeE378Cd65D7f15077d88afd93",
+    "timestamp": 1776086736
+  }
+}
