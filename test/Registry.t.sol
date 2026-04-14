@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.34;
 
-import {Vm} from "forge-std/Test.sol";
 import {CircuitBreaker} from "../src/CircuitBreaker.sol";
 import {Registry} from "../src/Registry.sol";
 import {TestBase, WithRegisteredPauser, WithThreePausables, MockPausable} from "./helpers/TestBase.sol";
@@ -195,20 +194,17 @@ contract RegistryUnregistration is WithRegisteredPauser {
     function test_UnregistersAndEmits() public {
         vm.expectEmit(true, true, true, true);
         emit Registry.PauserSet(address(mockPausable), pauser, address(0));
+        // Heartbeat cleared because pauser has no remaining pausables
+        vm.expectEmit(true, false, false, true);
+        emit CircuitBreaker.HeartbeatUpdated(pauser, 0);
 
-        vm.recordLogs();
         vm.prank(admin);
         cb.registerPauser(address(mockPausable), address(0));
 
         assertEq(cb.getPauser(address(mockPausable)), address(0));
         _assertPausablesLength(0);
         assertEq(cb.getPausableCount(pauser), 0);
-
-        // No HeartbeatUpdated event when unregistering
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        for (uint256 i = 0; i < logs.length; i++) {
-            assertTrue(logs[i].topics[0] != CircuitBreaker.HeartbeatUpdated.selector);
-        }
+        assertEq(cb.heartbeatExpiry(pauser), 0);
     }
 
     function test_IdempotentUnregistration() public {
