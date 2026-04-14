@@ -1,5 +1,5 @@
 {
-  "circuitBreaker": "0xe0B4Cd22430Ac55f0A8f1D45ecF2bd2B7Efb7E20",
+  "circuitBreaker": "0x44a5789dFeDa59cD176Ab5709ec2F4829dE4d555",
   "constructorArgs": {
     "admin": "0x0534aA41907c9631fae990960bCC72d75fA7cfeD",
     "initialHeartbeatInterval": 31536000,
@@ -10,9 +10,9 @@
     "minPauseDuration": 60
   },
   "meta": {
-    "blockNumber": 2609758,
+    "blockNumber": 2616041,
     "chainId": 560048,
     "deployer": "0xc51c16Cf3Fc254eeE378Cd65D7f15077d88afd93",
-    "timestamp": 1776086736
+    "timestamp": 1776168444
   }
 }
