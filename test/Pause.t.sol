@@ -172,12 +172,12 @@ contract PauseHappyPath is WithRegisteredPauser {
         vm.warp(block.timestamp + 1 hours);
         uint256 ts = block.timestamp;
 
-        vm.expectEmit(true, false, false, true);
-        emit CircuitBreaker.HeartbeatUpdated(pauser, ts + HEARTBEAT_INTERVAL);
         vm.expectEmit(true, true, true, true);
         emit Registry.PauserSet(address(mockPausable), pauser, address(0));
         vm.expectEmit(true, true, false, true);
         emit CircuitBreaker.PauseTriggered(address(mockPausable), pauser, PAUSE_DURATION);
+        vm.expectEmit(true, false, false, true);
+        emit CircuitBreaker.HeartbeatUpdated(pauser, 0);
 
         vm.prank(pauser);
         cb.pause(address(mockPausable));
@@ -185,19 +185,20 @@ contract PauseHappyPath is WithRegisteredPauser {
         assertTrue(mockPausable.isPaused());
         assertEq(mockPausable.getResumeSinceTimestamp(), ts + PAUSE_DURATION);
         assertEq(cb.getPauser(address(mockPausable)), address(0));
-        assertEq(cb.heartbeatExpiry(pauser), ts + HEARTBEAT_INTERVAL);
+        assertEq(cb.heartbeatExpiry(pauser), 0);
+        assertFalse(cb.isPauserLive(pauser));
         assertEq(cb.getPausableCount(pauser), 0);
         assertEq(cb.getPausables().length, 0);
     }
 
-    function test_HeartbeatRefreshedDuringPause() public {
+    function test_HeartbeatClearedWhenLastPausableIsPaused() public {
         vm.warp(block.timestamp + 1 hours);
-        uint256 ts = block.timestamp;
 
         vm.prank(pauser);
         cb.pause(address(mockPausable));
 
-        assertEq(cb.heartbeatExpiry(pauser), ts + HEARTBEAT_INTERVAL);
+        assertEq(cb.heartbeatExpiry(pauser), 0);
+        assertFalse(cb.isPauserLive(pauser));
     }
 }
 
