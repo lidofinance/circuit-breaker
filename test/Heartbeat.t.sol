@@ -142,15 +142,16 @@ contract HeartbeatAfterUnregistration is WithRegisteredPauser {
         cb.heartbeat();
     }
 
-    function test_RevertIf_UnregisteredByAdmin_EvenIfHeartbeatNotExpired() public {
+    function test_UnregistrationClearsHeartbeatOfAbandonedPauser() public {
         // Heartbeat is still active
         assertTrue(cb.isPauserLive(pauser));
 
         vm.prank(admin);
         cb.registerPauser(address(mockPausable), address(0));
 
-        // Still live (expiry not cleared), but not registered
-        assertTrue(cb.isPauserLive(pauser));
+        // Heartbeat cleared since pauser has no pausables left
+        assertEq(cb.heartbeatExpiry(pauser), 0);
+        assertFalse(cb.isPauserLive(pauser));
 
         vm.expectRevert(CircuitBreaker.SenderNotPauser.selector);
         vm.prank(pauser);
@@ -258,7 +259,7 @@ contract HeartbeatAfterPauseConsumption is WithThreePausables {
         vm.prank(pauser);
         cb.pause(address(pausable1));
 
-        // pause calls _updateHeartbeat, so expiry should be refreshed
+        // pause calls _setHeartbeatExpiry, so expiry should be refreshed
         assertEq(cb.heartbeatExpiry(pauser), ts + HEARTBEAT_INTERVAL);
     }
 
@@ -308,16 +309,33 @@ contract IsPauserLive is TestBase {
         assertFalse(cb.isPauserLive(address(0)));
     }
 
-    function test_TrueForUnregisteredPauserWithStaleExpiry() public {
+    function test_FalseAfterAdminUnregistersLastPausable() public {
         _registerPauser(address(mockPausable), pauser);
         assertTrue(cb.isPauserLive(pauser));
 
-        // Admin unregisters, but heartbeatExpiry is not cleared
+        // Admin unregisters — pauser has no pausables left, so heartbeat is cleared
         vm.prank(admin);
         cb.registerPauser(address(mockPausable), address(0));
 
         assertEq(cb.getPausableCount(pauser), 0);
-        // isPauserLive only checks timestamp, not registration
+        assertEq(cb.heartbeatExpiry(pauser), 0);
+        assertFalse(cb.isPauserLive(pauser));
+    }
+
+    function test_TrueWhenReplacedButStillRegisteredElsewhere() public {
+        address pauserB = makeAddr("pauserB");
+        MockPausable mp2 = new MockPausable();
+
+        _registerPauser(address(mockPausable), pauser);
+        _registerPauser(address(mp2), pauser);
+        assertTrue(cb.isPauserLive(pauser));
+
+        // Admin reassigns only one of the pauser's pausables
+        vm.prank(admin);
+        cb.registerPauser(address(mockPausable), pauserB);
+
+        // Heartbeat preserved because pauser still has mp2
+        assertEq(cb.getPausableCount(pauser), 1);
         assertTrue(cb.isPauserLive(pauser));
     }
 

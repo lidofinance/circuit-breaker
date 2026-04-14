@@ -200,8 +200,7 @@ contract CircuitBreaker {
         return registry.getPausableCount(_pauser);
     }
 
-    /// @notice Return whether a pauser's heartbeat window is still valid.
-    /// @dev    Only checks the heartbeat expiry, not registration.
+    /// @notice Return whether a pauser is live and registered to at least one pausable.
     /// @param  _pauser Pauser address.
     /// @return True if the heartbeat has not expired.
     function isPauserLive(address _pauser) public view returns (bool) {
@@ -225,17 +224,25 @@ contract CircuitBreaker {
     }
 
     /// @notice Register, replace, or unregister a pauser for a pausable.
-    ///         - Previous pauser will be overwritten.
-    ///         - Pauser heartbeat updated on registration.
+    ///         - The previous pauser is overwritten. If they have no remaining pausables,
+    ///           their heartbeat expiry is cleared.
+    ///         - The new pauser's heartbeat expiry is extended on registration.
     /// @dev    Does not verify CircuitBreaker has pause permission on the pausable or that the
     ///         pausable implements the correct interface. These properties can change after
     ///         registration (e.g. the pausable revokes the role, implementation changes via proxy upgrade).
     /// @param  _pausable Pausable contract address.
     /// @param  _newPauser New pauser address. Zero unregisters the pauser.
     function registerPauser(address _pausable, address _newPauser) external onlyAdmin {
+        address previousPauser = registry.getPauser(_pausable);
         registry.setPauser(_pausable, _newPauser);
 
-        if (_newPauser != address(0)) _updateHeartbeat(_newPauser, false);
+        if (previousPauser != address(0) && !registry.isRegistered(previousPauser)) {
+            _setHeartbeatExpiry(previousPauser, 0);
+        }
+
+        if (_newPauser != address(0)) {
+            _setHeartbeatExpiry(_newPauser, block.timestamp + heartbeatInterval);
+        }
     }
 
     // =========================================================================
@@ -245,16 +252,20 @@ contract CircuitBreaker {
     /// @notice Record a liveness proof to remain authorized to pause.
     function heartbeat() external {
         require(registry.isRegistered(msg.sender), SenderNotPauser());
-        _updateHeartbeat(msg.sender, true);
+        require(isPauserLive(msg.sender), HeartbeatExpired());
+
+        _setHeartbeatExpiry(msg.sender, block.timestamp + heartbeatInterval);
     }
 
     /// @notice Pause a pausable contract. The pausable must implement IPausable and must have
-    ///         granted CircuitBreaker the pause role. Refreshes the caller's heartbeat.
-    ///         Single-use: the pauser is unregistered after a successful pause.
+    ///         granted CircuitBreaker the pause role.
+    ///         Single-use: the caller is unregistered from this pausable after a successful
+    ///         pause. Their heartbeat expiry is extended if they still have other
+    ///         pausables registered, or cleared otherwise.
     /// @param  _pausable Pausable contract to pause.
     function pause(address _pausable) external nonReentrant {
         require(msg.sender == registry.getPauser(_pausable), SenderNotPauser());
-        _updateHeartbeat(msg.sender, true);
+        require(isPauserLive(msg.sender), HeartbeatExpired());
 
         uint256 duration = pauseDuration;
         IPausable target = IPausable(_pausable);
@@ -262,22 +273,22 @@ contract CircuitBreaker {
         registry.setPauser(_pausable, address(0));
         target.pauseFor(duration);
         require(target.isPaused(), PauseFailed());
-
         emit PauseTriggered(_pausable, msg.sender, duration);
+
+        _setHeartbeatExpiry(msg.sender, registry.isRegistered(msg.sender) ? block.timestamp + heartbeatInterval : 0);
     }
 
     // =========================================================================
     // Internal functions
     // =========================================================================
 
-    /// @dev    Prolongs the pauser's heartbeat expiry.
+    /// @dev    Sets the heartbeat expiry.
     /// @param  _pauser Pauser address.
-    /// @param  _requireActive Whether to require the pauser's heartbeat to still be valid.
-    function _updateHeartbeat(address _pauser, bool _requireActive) internal {
-        if (_requireActive) require(isPauserLive(_pauser), HeartbeatExpired());
-        uint256 expiry = block.timestamp + heartbeatInterval;
-        heartbeatExpiry[_pauser] = expiry;
-        emit HeartbeatUpdated(_pauser, expiry);
+    /// @param  _expiry New heartbeat expiry timestamp.
+    function _setHeartbeatExpiry(address _pauser, uint256 _expiry) internal {
+        heartbeatExpiry[_pauser] = _expiry;
+
+        emit HeartbeatUpdated(_pauser, _expiry);
     }
 
     /// @dev    Sets the pause duration. Reverts if outside [MIN, MAX] bounds.
