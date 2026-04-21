@@ -3,7 +3,6 @@
 pragma solidity 0.8.34;
 
 import {CircuitBreaker} from "../src/CircuitBreaker.sol";
-import {Registry} from "../src/Registry.sol";
 import {TestBase, MockPausable} from "./helpers/TestBase.sol";
 
 contract FullLifecycle is TestBase {

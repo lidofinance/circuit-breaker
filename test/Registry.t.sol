@@ -4,7 +4,7 @@ pragma solidity 0.8.34;
 
 import {CircuitBreaker} from "../src/CircuitBreaker.sol";
 import {Registry} from "../src/Registry.sol";
-import {TestBase, WithRegisteredPauser, WithThreePausables, MockPausable} from "./helpers/TestBase.sol";
+import {TestBase, WithRegisteredPauser, MockPausable} from "./helpers/TestBase.sol";
 
 // =============================================================================
 // Access control

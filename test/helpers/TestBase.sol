@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.34;
 
-import {Test, Vm} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {CircuitBreaker, IPausable} from "../../src/CircuitBreaker.sol";
-import {Registry} from "../../src/Registry.sol";
 
 // ---------------------------------------------------------------------------
 // Mocks
