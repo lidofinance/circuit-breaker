@@ -1,0 +1,9 @@
+{
+  "admin": "0x0534aA41907c9631fae990960bCC72d75fA7cfeD",
+  "minPauseDuration": 60,
+  "maxPauseDuration": 2592000,
+  "minHeartbeatInterval": 60,
+  "maxHeartbeatInterval": 94608000,
+  "initialPauseDuration": 3600,
+  "initialHeartbeatInterval": 31536000
+}

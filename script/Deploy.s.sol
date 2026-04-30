@@ -4,63 +4,58 @@ pragma solidity 0.8.34;
 
 import {Script, console} from "forge-std/Script.sol";
 import {CircuitBreaker} from "../src/CircuitBreaker.sol";
+import {DeployParams} from "./helpers/DeployParams.sol";
 
 /// @title  Deploy
-/// @notice Deploys CircuitBreaker with all parameters passed via --sig.
+/// @notice Deploys CircuitBreaker. Constructor parameters are loaded from a
+///         JSON file referenced by the DEPLOY_PARAMS env var.
 ///
 /// Usage:
+///   DEPLOY_PARAMS=deploy-params/<network>.json \
 ///   forge script script/Deploy.s.sol:Deploy \
-///     --sig "run(address,uint256,uint256,uint256,uint256,uint256,uint256)" \
-///     <admin> <minPauseDuration> <maxPauseDuration> \
-///     <minHeartbeatInterval> <maxHeartbeatInterval> \
-///     <initialPauseDuration> <initialHeartbeatInterval> \
-///     --rpc-url hoodi \
-///     --private-key $DEPLOYER_PRIVATE_KEY \
+///     --rpc-url <rpc-url> \
+///     --account <keystore-name> \
 ///     --broadcast \
 ///     --verify
 ///
 /// Output:
-///   Writes deploy artifact to out/deploy.json with the deployed address.
+///   Writes deploy artifact to <DEPLOY_NAME or chainid>.json.
 contract Deploy is Script {
-    function run(
-        address _admin,
-        uint256 _minPauseDuration,
-        uint256 _maxPauseDuration,
-        uint256 _minHeartbeatInterval,
-        uint256 _maxHeartbeatInterval,
-        uint256 _initialPauseDuration,
-        uint256 _initialHeartbeatInterval
-    ) external {
+    function run() external {
+        string memory paramsPath = vm.envString("DEPLOY_PARAMS");
+        DeployParams.Params memory p = DeployParams.load(vm, paramsPath);
+
         console.log("Deploying CircuitBreaker");
         console.log("  chainid:                  ", block.chainid);
-        console.log("  admin:                    ", _admin);
-        console.log("  minPauseDuration:         ", _minPauseDuration);
-        console.log("  maxPauseDuration:         ", _maxPauseDuration);
-        console.log("  minHeartbeatInterval:     ", _minHeartbeatInterval);
-        console.log("  maxHeartbeatInterval:     ", _maxHeartbeatInterval);
-        console.log("  initialPauseDuration:     ", _initialPauseDuration);
-        console.log("  initialHeartbeatInterval: ", _initialHeartbeatInterval);
+        console.log("  paramsPath:               ", paramsPath);
+        console.log("  admin:                    ", p.admin);
+        console.log("  minPauseDuration:         ", p.minPauseDuration);
+        console.log("  maxPauseDuration:         ", p.maxPauseDuration);
+        console.log("  minHeartbeatInterval:     ", p.minHeartbeatInterval);
+        console.log("  maxHeartbeatInterval:     ", p.maxHeartbeatInterval);
+        console.log("  initialPauseDuration:     ", p.initialPauseDuration);
+        console.log("  initialHeartbeatInterval: ", p.initialHeartbeatInterval);
 
         vm.startBroadcast();
         CircuitBreaker circuitBreaker = new CircuitBreaker(
-            _admin,
-            _minPauseDuration,
-            _maxPauseDuration,
-            _minHeartbeatInterval,
-            _maxHeartbeatInterval,
-            _initialPauseDuration,
-            _initialHeartbeatInterval
+            p.admin,
+            p.minPauseDuration,
+            p.maxPauseDuration,
+            p.minHeartbeatInterval,
+            p.maxHeartbeatInterval,
+            p.initialPauseDuration,
+            p.initialHeartbeatInterval
         );
         vm.stopBroadcast();
 
         string memory args = "args";
-        vm.serializeAddress(args, "admin", _admin);
-        vm.serializeUint(args, "minPauseDuration", _minPauseDuration);
-        vm.serializeUint(args, "maxPauseDuration", _maxPauseDuration);
-        vm.serializeUint(args, "minHeartbeatInterval", _minHeartbeatInterval);
-        vm.serializeUint(args, "maxHeartbeatInterval", _maxHeartbeatInterval);
-        vm.serializeUint(args, "initialPauseDuration", _initialPauseDuration);
-        string memory argsJson = vm.serializeUint(args, "initialHeartbeatInterval", _initialHeartbeatInterval);
+        vm.serializeAddress(args, "admin", p.admin);
+        vm.serializeUint(args, "minPauseDuration", p.minPauseDuration);
+        vm.serializeUint(args, "maxPauseDuration", p.maxPauseDuration);
+        vm.serializeUint(args, "minHeartbeatInterval", p.minHeartbeatInterval);
+        vm.serializeUint(args, "maxHeartbeatInterval", p.maxHeartbeatInterval);
+        vm.serializeUint(args, "initialPauseDuration", p.initialPauseDuration);
+        string memory argsJson = vm.serializeUint(args, "initialHeartbeatInterval", p.initialHeartbeatInterval);
 
         string memory meta = "meta";
         vm.serializeAddress(meta, "deployer", msg.sender);
