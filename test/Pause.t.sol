@@ -88,6 +88,19 @@ contract MockPausableAlreadyPaused is IPausable {
     function pauseFor(uint256) external {}
 }
 
+contract MockPausableRevertsIfAlreadyPaused is IPausable {
+    uint256 private _resumeSince;
+
+    function isPaused() external view returns (bool) {
+        return block.timestamp < _resumeSince;
+    }
+
+    function pauseFor(uint256 duration) external {
+        require(block.timestamp >= _resumeSince, "already paused");
+        _resumeSince = block.timestamp + duration;
+    }
+}
+
 // =============================================================================
 // Access control
 // =============================================================================
@@ -458,6 +471,23 @@ contract PauseAlreadyPaused is TestBase {
 
         assertTrue(mockPausable.isPaused());
         assertEq(cb.getPauser(address(mockPausable)), address(0));
+    }
+
+    function test_RevertIf_PausableRejectsPauseWhenAlreadyPaused() public {
+        MockPausableRevertsIfAlreadyPaused reverting = new MockPausableRevertsIfAlreadyPaused();
+        _registerPauser(address(reverting), pauser);
+
+        // Pre-pause so the mock's own guard rejects the next pauseFor
+        reverting.pauseFor(1 days);
+        assertTrue(reverting.isPaused());
+
+        vm.expectRevert("already paused");
+        vm.prank(pauser);
+        cb.pause(address(reverting));
+
+        // Pauser still registered after reverted tx
+        assertEq(cb.getPauser(address(reverting)), pauser);
+        assertEq(cb.getPausableCount(pauser), 1);
     }
 }
 
