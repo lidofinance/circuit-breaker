@@ -36,7 +36,12 @@ contract Deploy is Script {
         console.log("  initialPauseDuration:     ", p.initialPauseDuration);
         console.log("  initialHeartbeatInterval: ", p.initialHeartbeatInterval);
 
+        // Capture the broadcaster — the account that actually signs and sends
+        // the deploy tx. It must be read inside the broadcast context: outside
+        // it (e.g. after stopBroadcast) msg.sender is Foundry's default sender,
+        // not the configured --account / --sender / --ledger signer.
         vm.startBroadcast();
+        (, address deployer,) = vm.readCallers();
         CircuitBreaker circuitBreaker = new CircuitBreaker(
             p.admin,
             p.minPauseDuration,
@@ -58,10 +63,15 @@ contract Deploy is Script {
         string memory argsJson = vm.serializeUint(args, "initialHeartbeatInterval", p.initialHeartbeatInterval);
 
         string memory meta = "meta";
-        vm.serializeAddress(meta, "deployer", msg.sender);
+        vm.serializeAddress(meta, "deployer", deployer);
         vm.serializeUint(meta, "chainId", block.chainid);
-        vm.serializeUint(meta, "blockNumber", block.number);
-        string memory metaJson = vm.serializeUint(meta, "timestamp", block.timestamp);
+        // The deploy tx is not yet mined when this artifact is written, so its
+        // hash, mined block number and timestamp are unknowable here. They are
+        // emitted as empty placeholders to be filled in by hand from the
+        // broadcast receipt / explorer once the deployment is confirmed.
+        vm.serializeString(meta, "txHash", "");
+        vm.serializeString(meta, "blockNumber", "");
+        string memory metaJson = vm.serializeString(meta, "timestamp", "");
 
         string memory root = "root";
         vm.serializeAddress(root, "circuitBreaker", address(circuitBreaker));

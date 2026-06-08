@@ -10,9 +10,10 @@
     "minPauseDuration": 432000
   },
   "meta": {
-    "blockNumber": 24993188,
+    "blockNumber": 24993190,
     "chainId": 1,
-    "deployer": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
-    "timestamp": 1777555295
+    "deployer": "0xaCf5f111399a7c613D2f5b96b70F2Ea464D3cdF3",
+    "timestamp": 1777555319,
+    "txHash": "0x9a1328c1f63fcdfd53d611cfe9c9a5f4c284c4c3e61af9066d90acaac2d5279f"
   }
 }
